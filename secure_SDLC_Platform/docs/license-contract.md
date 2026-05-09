@@ -34,8 +34,22 @@ If the request omits these fields, the backend falls back to environment/license
 - `ENTERPRISE_MAX_USERS`
 - `ENTERPRISE_LICENSE_FILE`
 - `ENTERPRISE_LICENSE_SIGNING_SECRET`
+- `ENTERPRISE_LICENSE_MODE`
+- `ENTERPRISE_LICENSE_SYNC_ENDPOINT`
+- `ENTERPRISE_LICENSE_ACTIVATION_TOKEN`
+- `ENTERPRISE_LICENSE_CACHE_FILE`
 
 When `ENTERPRISE_LICENSE_ENFORCEMENT_ENABLED=true`, the backend validates the license before creating or triggering a Jenkins job.
+
+## Online Sync Endpoint
+
+When `ENTERPRISE_LICENSE_MODE=online-sync`, the client-hosted backend exposes:
+
+- `POST /license/sync`
+
+The backend sends `client_id`, `client_name`, an activation token, current license metadata, and platform metadata to the Horizon Relevance license service. The license service returns a signed license payload. The client-hosted backend validates the signature, writes the license to `ENTERPRISE_LICENSE_CACHE_FILE`, and uses the cached license for future `/license/status`, `/license/validate`, and pipeline enforcement.
+
+The activation token must be stored as a Kubernetes Secret or in the client's external secret system. It must not be stored in Git.
 
 ## Jenkins Parameters
 
