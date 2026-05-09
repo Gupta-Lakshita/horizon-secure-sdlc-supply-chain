@@ -1,0 +1,33 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: horizon-enterprise-config
+  namespace: {{ .Values.installer.namespace | quote }}
+  labels:
+    app.kubernetes.io/name: horizon-platform
+    app.kubernetes.io/component: enterprise-config
+data:
+  CLIENT_ID: {{ .Values.client.id | quote }}
+  CLIENT_NAME: {{ .Values.client.name | quote }}
+  CLIENT_INDUSTRY: {{ .Values.client.industry | quote }}
+  AWS_REGION: {{ .Values.aws.region | quote }}
+  ARTIFACT_BUCKET: {{ .Values.aws.artifactBucket | quote }}
+  DEV_ACCOUNT_ID: {{ .Values.aws.accounts.dev.accountId | quote }}
+  DEV_ROLE_ARN: {{ .Values.aws.accounts.dev.roleArn | quote }}
+  DEV_CLUSTER_NAME: {{ .Values.aws.accounts.dev.clusterName | quote }}
+  DEV_NAMESPACE: {{ .Values.aws.accounts.dev.namespace | quote }}
+  QA_ACCOUNT_ID: {{ .Values.aws.accounts.qa.accountId | quote }}
+  QA_ROLE_ARN: {{ .Values.aws.accounts.qa.roleArn | quote }}
+  QA_CLUSTER_NAME: {{ .Values.aws.accounts.qa.clusterName | quote }}
+  QA_NAMESPACE: {{ .Values.aws.accounts.qa.namespace | quote }}
+  PROD_ACCOUNT_ID: {{ .Values.aws.accounts.prod.accountId | quote }}
+  PROD_SOURCE_ROLE_ARN: {{ .Values.aws.accounts.prod.sourceRoleArn | quote }}
+  PROD_TARGET_ROLE_ARN: {{ .Values.aws.accounts.prod.targetRoleArn | quote }}
+  PROD_CLUSTER_NAME: {{ .Values.aws.accounts.prod.clusterName | quote }}
+  PROD_NAMESPACE: {{ .Values.aws.accounts.prod.namespace | quote }}
+  LICENSE_MODE: {{ .Values.license.mode | quote }}
+  LICENSE_SYNC_ENDPOINT: {{ .Values.license.syncEndpoint | quote }}
+  LICENSE_CLIENT_ID: {{ .Values.license.clientId | quote }}
+  LICENSE_RENEWAL_CHECK_HOURS: {{ .Values.license.renewalCheckHours | quote }}
+  IDENTITY_MODE: {{ .Values.identity.mode | quote }}
+

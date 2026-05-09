@@ -1,0 +1,90 @@
+installer:
+  mode: byo-infra
+  namespace: horizon-platform
+
+client:
+  id: example-client
+  name: "Example Client"
+  industry: unknown
+
+domain:
+  frontendHost: horizon.example.com
+  backendPath: /pipeline/api
+  jenkinsHost: jenkins.example.com
+  keycloakHost: keycloak.example.com
+
+aws:
+  region: us-east-1
+  artifactBucket: example-devsecops-artifacts
+  accounts:
+    dev:
+      accountId: "111111111111"
+      roleArn: arn:aws:iam::111111111111:role/HorizonDevDeployRole
+      clusterName: example-dev-eks
+      namespace: example-app-dev
+    qa:
+      accountId: "222222222222"
+      roleArn: arn:aws:iam::222222222222:role/HorizonQaDeployRole
+      clusterName: example-qa-eks
+      namespace: example-app-qa
+    prod:
+      accountId: "333333333333"
+      sourceRoleArn: arn:aws:iam::222222222222:role/HorizonProdPromotionSourceRole
+      targetRoleArn: arn:aws:iam::333333333333:role/HorizonProdPromotionTargetRole
+      clusterName: example-prod-eks
+      namespace: example-app-prod
+
+license:
+  enforcementEnabled: true
+  mode: online-sync
+  syncEndpoint: https://license.horizonrelevance.com/api/v1/licenses/sync
+  clientId: example-client
+  activationTokenSecretName: horizon-license-activation
+  renewalCheckHours: 24
+  type: trial
+  expiresAt: "2026-06-30T23:59:59Z"
+  enabledPipelines:
+    - Devops Pipeline
+    - Test Devops Pipeline
+  enabledFeatures:
+    - build
+    - artifact_publish
+    - code_scan
+    - image_scan
+    - policy_validation
+    - static_application_security
+    - test_suites
+    - notifications
+  allowedEnvironments:
+    - DEV
+    - QA
+  limits:
+    maxRepos: 3
+    maxBuildsPerMonth: 100
+    maxUsers: 10
+
+identity:
+  mode: client-oidc
+  ldap:
+    enabled: false
+    host: ""
+    baseDn: ""
+    bindSecretName: ""
+
+components:
+  frontend:
+    enabled: true
+    image: docker.io/ankur1825/horizon-self-service-cicd-pipeline-ui-dashboard:1.4.16
+  backend:
+    enabled: true
+    image: docker.io/ankur1825/horizon-self-service-cicd-pipeline-backend:1.4.19
+  jenkins:
+    enabled: true
+    image: docker.io/ankur1825/horizon-jenkins:1.0.7
+  keycloak:
+    enabled: false
+  openldap:
+    enabled: false
+  sonarqube:
+    enabled: false
+

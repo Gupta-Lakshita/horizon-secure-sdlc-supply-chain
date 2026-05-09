@@ -1,0 +1,11 @@
+.DS_Store
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+*.auto.tfvars
+*.local.yaml
+client-values.generated.yaml
+license*.json
+secrets*.yaml
+

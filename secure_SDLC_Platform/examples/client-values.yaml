@@ -1,11 +1,17 @@
 # Example client-hosted values.
-# This file should be copied per client and stored outside source control if it contains sensitive names.
+# Copy this file to client-values.local.yaml and replace placeholders.
+# Do not commit real client values, secrets, activation tokens, or Terraform backend details.
+
+installer:
+  mode: byo-infra # full-provision | byo-infra
+  releaseName: horizon-ai-devsecops
+  namespace: horizon-platform
 
 client:
   id: acme-fintech
   name: "Acme Fintech"
   industry: fintech
-  environment: EKS-NONPROD
+  dataBoundary: client-hosted
 
 domain:
   baseDomain: devsecops.acme-demo.com
@@ -16,16 +22,44 @@ domain:
 
 aws:
   region: us-east-1
-  accountId: "111122223333"
-  ecrRegistry: "111122223333"
   artifactBucket: acme-fintech-devsecops-artifacts
-  executionRoleArn: arn:aws:iam::111122223333:role/AcmeDevSecOpsExecutionRole
-  snsTopicArn: arn:aws:sns:us-east-1:111122223333:acme-devsecops-notifications
+  accounts:
+    dev:
+      accountId: "111122223333"
+      roleArn: arn:aws:iam::111122223333:role/HorizonDevDeployRole
+      clusterName: acme-dev-eks
+      namespace: acme-app-dev
+    qa:
+      accountId: "111122223333"
+      roleArn: arn:aws:iam::111122223333:role/HorizonQaDeployRole
+      clusterName: acme-qa-eks
+      namespace: acme-app-qa
+    stage:
+      accountId: "111122223333"
+      roleArn: arn:aws:iam::111122223333:role/HorizonStageDeployRole
+      clusterName: acme-stage-eks
+      namespace: acme-app-stage
+    prod:
+      accountId: "444455556666"
+      sourceRoleArn: arn:aws:iam::111122223333:role/HorizonProdPromotionSourceRole
+      targetRoleArn: arn:aws:iam::444455556666:role/HorizonProdPromotionTargetRole
+      clusterName: acme-prod-eks
+      namespace: acme-app-prod
+  ecr:
+    mirrorHorizonImages: true
+    productRepositoryPrefix: horizon
+    applicationRepositoryPrefix: acme-devsecops
+  notifications:
+    snsTopicArn: arn:aws:sns:us-east-1:111122223333:acme-devsecops-notifications
 
 license:
   enforcementEnabled: true
+  mode: online-sync # online-sync | offline-file
+  syncEndpoint: https://license.horizonrelevance.com/api/v1/licenses/sync
+  clientId: acme-fintech
+  activationTokenSecretName: horizon-license-activation
+  renewalCheckHours: 24
   type: trial
-  key: replace-with-issued-license-key
   expiresAt: "2026-05-28T23:59:59Z"
   enabledPipelines:
     - Devops Pipeline
@@ -40,15 +74,48 @@ license:
     - test_suites
     - notifications
   allowedEnvironments:
-    - EKS-NONPROD
+    - DEV
+    - QA
   limits:
     maxRepos: 3
     maxBuildsPerMonth: 25
     maxUsers: 10
 
-secrets:
-  useExternalSecrets: true
-  licenseSigningSecretName: horizon-license-signing
-  githubCredentialSecretName: client-github-token
-  ldapAdminSecretName: client-openldap-admin
-  jenkinsAdminSecretName: client-jenkins-admin
+identity:
+  mode: client-oidc # client-oidc | client-saml | existing-ldap | managed-keycloak-openldap
+  keycloak:
+    deploy: true
+  ldap:
+    enabled: false
+    host: ldap.client.example
+    baseDn: dc=client,dc=example
+    bindSecretName: client-ldap-bind
+
+components:
+  frontend:
+    enabled: true
+    image: docker.io/ankur1825/horizon-self-service-cicd-pipeline-ui-dashboard:1.4.16
+  backend:
+    enabled: true
+    image: docker.io/ankur1825/horizon-self-service-cicd-pipeline-backend:1.4.19
+  jenkins:
+    enabled: true
+    image: docker.io/ankur1825/horizon-jenkins:1.0.7
+    sharedLibrary:
+      source: private-git # private-git | release-bundle | baked-in-image
+      repository: git@github.com:ankur1825/jenkins-shared-library.git
+      branch: main
+  sonarqube:
+    enabled: true
+  openldap:
+    enabled: false
+  keycloak:
+    enabled: true
+
+existingInfrastructure:
+  ingressClassName: nginx
+  storageClassName: gp3
+  useExistingVpc: true
+  useExistingEks: true
+  useExistingEcr: true
+  useExistingArtifactBucket: true

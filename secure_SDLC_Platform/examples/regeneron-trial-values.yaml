@@ -1,0 +1,128 @@
+# Example Regeneron-style trial values.
+# Copy to regeneron-trial.local.yaml and replace placeholders.
+# Do not commit real client values, secrets, activation tokens, or Terraform backend details.
+
+installer:
+  mode: full-provision # full-provision | byo-infra
+  releaseName: horizon-ai-devsecops
+  namespace: horizon-platform
+
+client:
+  id: regeneron-healthcare
+  name: "Regeneron"
+  industry: healthcare-pharma
+  dataBoundary: client-hosted
+
+domain:
+  baseDomain: devsecops.regeneron.example
+  frontendHost: horizon.devsecops.regeneron.example
+  backendPath: /pipeline/api
+  jenkinsHost: jenkins.devsecops.regeneron.example
+  keycloakHost: keycloak.devsecops.regeneron.example
+  sonarqubeHost: sonar.devsecops.regeneron.example
+
+aws:
+  region: us-east-1
+  artifactBucket: regeneron-devsecops-artifacts
+  kmsKeyAlias: alias/regeneron-horizon-devsecops
+  accounts:
+    dev:
+      accountId: "111111111111"
+      roleArn: arn:aws:iam::111111111111:role/HorizonDevDeployRole
+      clusterName: regeneron-dev-eks
+      namespace: regeneron-app-dev
+    qa:
+      accountId: "222222222222"
+      roleArn: arn:aws:iam::222222222222:role/HorizonQaDeployRole
+      clusterName: regeneron-qa-eks
+      namespace: regeneron-app-qa
+    stage:
+      accountId: "222222222222"
+      roleArn: arn:aws:iam::222222222222:role/HorizonStageDeployRole
+      clusterName: regeneron-stage-eks
+      namespace: regeneron-app-stage
+    prod:
+      accountId: "333333333333"
+      sourceRoleArn: arn:aws:iam::222222222222:role/HorizonProdPromotionSourceRole
+      targetRoleArn: arn:aws:iam::333333333333:role/HorizonProdPromotionTargetRole
+      clusterName: regeneron-prod-eks
+      namespace: regeneron-app-prod
+  ecr:
+    mirrorHorizonImages: true
+    productRepositoryPrefix: horizon
+    applicationRepositoryPrefix: regeneron-devsecops
+  notifications:
+    snsTopicArn: arn:aws:sns:us-east-1:111111111111:regeneron-devsecops-notifications
+
+license:
+  enforcementEnabled: true
+  mode: online-sync # online-sync | offline-file
+  syncEndpoint: https://license.horizonrelevance.com/api/v1/licenses/sync
+  clientId: regeneron-healthcare
+  activationTokenSecretName: horizon-license-activation
+  renewalCheckHours: 24
+  type: trial
+  expiresAt: "2026-06-30T23:59:59Z"
+  enabledPipelines:
+    - Devops Pipeline
+    - Test Devops Pipeline
+  enabledFeatures:
+    - build
+    - artifact_publish
+    - code_scan
+    - image_scan
+    - policy_validation
+    - static_application_security
+    - test_suites
+    - notifications
+  allowedEnvironments:
+    - DEV
+    - QA
+  limits:
+    maxRepos: 3
+    maxBuildsPerMonth: 100
+    maxUsers: 10
+
+identity:
+  mode: client-oidc # client-oidc | client-saml | existing-ldap | managed-keycloak-openldap
+  keycloak:
+    deploy: true
+    brokerClientId: horizon-devsecops
+  oidc:
+    issuerUrl: https://idp.regeneron.example/oauth2/default
+    clientIdSecretName: regeneron-oidc-client
+  ldap:
+    enabled: false
+    host: ldap.regeneron.example
+    baseDn: dc=regeneron,dc=example
+    bindSecretName: regeneron-ldap-bind
+
+components:
+  frontend:
+    enabled: true
+    image: docker.io/ankur1825/horizon-self-service-cicd-pipeline-ui-dashboard:1.4.16
+  backend:
+    enabled: true
+    image: docker.io/ankur1825/horizon-self-service-cicd-pipeline-backend:1.4.19
+  jenkins:
+    enabled: true
+    image: docker.io/ankur1825/horizon-jenkins:1.0.7
+    sharedLibrary:
+      source: private-git # private-git | release-bundle | baked-in-image
+      repository: git@github.com:ankur1825/jenkins-shared-library.git
+      branch: main
+  sonarqube:
+    enabled: true
+  openldap:
+    enabled: false
+  keycloak:
+    enabled: true
+
+existingInfrastructure:
+  ingressClassName: nginx
+  storageClassName: gp3
+  useExistingVpc: false
+  useExistingEks: false
+  useExistingEcr: false
+  useExistingArtifactBucket: false
+
