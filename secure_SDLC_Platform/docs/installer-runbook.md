@@ -245,6 +245,35 @@ license:
 
 For restricted networks, allow outbound HTTPS only to the Horizon license endpoint. If the client cannot permit outbound license sync, use offline license file mode as a fallback.
 
+For a local 2-day trial demonstration, run the included Horizon-owned license server skeleton:
+
+```bash
+cd secure_SDLC_Platform/license-server
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+export LICENSE_SIGNING_SECRET='change-me-demo-secret'
+export REGENERON_ACTIVATION_TOKEN='regeneron-demo-token'
+uvicorn app:app --host 0.0.0.0 --port 8090
+```
+
+Then configure the client backend with:
+
+```yaml
+enterprise:
+  licenseEnforcementEnabled: true
+  licenseMode: online-sync
+  licenseSyncEndpoint: http://horizon-license-server.horizon-platform.svc.cluster.local:8090/api/v1/licenses/sync
+  signingSecret:
+    existingSecret: horizon-license-signing
+    key: ENTERPRISE_LICENSE_SIGNING_SECRET
+  activationTokenSecret:
+    existingSecret: horizon-license-activation
+    key: ENTERPRISE_LICENSE_ACTIVATION_TOKEN
+```
+
+In production, the license server should be deployed by Horizon Relevance, not by the client, and should use HTTPS, audit logs, token hashing, rate limits, and KMS/HSM-backed signing.
+
 ## Identity Configuration
 
 Supported identity modes:
@@ -312,4 +341,3 @@ Offline fallback:
 | Frontend loads but backend fails | Ingress path or backend URL mismatch. | Validate `domain.backendPath` and ingress rules. |
 | LDAP login fails | Bind DN, base DN, TLS, or group filter mismatch. | Test LDAP bind from Keycloak pod. |
 | ECR push fails | Missing auth, wrong account ID, or repository does not exist. | Validate `aws ecr get-login-password` and repository mapping. |
-
