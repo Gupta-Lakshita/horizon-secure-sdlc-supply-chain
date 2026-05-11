@@ -10,7 +10,7 @@ Horizon Relevance trial and enterprise deployments should pull product images fr
 | --- | --- | --- |
 | Frontend | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/frontend` | `1.4.18` |
 | Backend | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend` | `1.4.21` |
-| Jenkins | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/jenkins` | `1.0.7` |
+| Jenkins | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/jenkins` | `1.0.8` |
 | SonarQube mirror | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/sonarqube` | `10.4-community` |
 | Container/IaC scanner | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/trivy-scanner` | `1.1.2` |
 | Policy validation service | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/opa-scanner` | `1.0.1` |
@@ -63,4 +63,4 @@ The backend denies pipeline creation when the requested ECR/image account does n
 
 ## Jenkins Note
 
-The current Jenkins runtime image remains `1.0.7`. It should be mirrored into private ECR for trial use, but the next hardening release should rebuild Jenkins from source with pinned tool downloads or restored local binary artifacts so no static bootstrap credentials are present in any image layer.
+Jenkins image `1.0.8` is a hardened derivative of `ankur1825/horizon-jenkins:1.0.7`. It removes the static bootstrap Groovy admin script and validates the required CI tools on the runtime path. Authentication must be configured through Helm/JCasC/LDAP at deployment time.

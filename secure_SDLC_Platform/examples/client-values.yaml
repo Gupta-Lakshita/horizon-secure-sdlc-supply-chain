@@ -106,7 +106,7 @@ components:
     image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.21
   jenkins:
     enabled: true
-    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/jenkins:1.0.7
+    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/jenkins:1.0.8
     sharedLibrary:
       source: private-git # private-git | release-bundle | baked-in-image
       repository: git@github.com:ankur1825/jenkins-shared-library.git
