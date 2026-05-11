@@ -58,6 +58,10 @@ license:
   allowedEnvironments:
     - DEV
     - QA
+  allowedAwsAccountIds:
+    - "111111111111"
+    - "222222222222"
+  installationId: example-client-horizon-installation-001
   limits:
     maxRepos: 3
     maxBuildsPerMonth: 100
@@ -74,17 +78,23 @@ identity:
 components:
   frontend:
     enabled: true
-    image: docker.io/ankur1825/horizon-self-service-cicd-pipeline-ui-dashboard:1.4.16
+    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/frontend:1.4.18
   backend:
     enabled: true
-    image: docker.io/ankur1825/horizon-self-service-cicd-pipeline-backend:1.4.19
+    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.21
   jenkins:
     enabled: true
-    image: docker.io/ankur1825/horizon-jenkins:1.0.7
+    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/jenkins:1.0.7
   keycloak:
     enabled: false
   openldap:
     enabled: false
   sonarqube:
     enabled: false
-
+    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/sonarqube:10.4-community
+  trivy:
+    enabled: true
+    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/trivy-scanner:1.1.2
+  opa:
+    enabled: true
+    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/opa-scanner:1.0.1

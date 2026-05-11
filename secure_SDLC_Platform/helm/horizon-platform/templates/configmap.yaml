@@ -28,6 +28,8 @@ data:
   LICENSE_MODE: {{ .Values.license.mode | quote }}
   LICENSE_SYNC_ENDPOINT: {{ .Values.license.syncEndpoint | quote }}
   LICENSE_CLIENT_ID: {{ .Values.license.clientId | quote }}
+  LICENSE_INSTALLATION_ID: {{ .Values.license.installationId | quote }}
+  LICENSE_ALLOWED_AWS_ACCOUNT_IDS: {{ join "," .Values.license.allowedAwsAccountIds | quote }}
   LICENSE_RENEWAL_CHECK_HOURS: {{ .Values.license.renewalCheckHours | quote }}
   IDENTITY_MODE: {{ .Values.identity.mode | quote }}
-
+  HORIZON_PRODUCT_REGISTRY: {{ .Values.aws.ecr.horizonRegistry | default "" | quote }}

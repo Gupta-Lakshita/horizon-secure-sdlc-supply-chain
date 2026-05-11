@@ -25,6 +25,7 @@ The product code remains in the existing backend, frontend, and Jenkins shared-l
 - `docs/client-onboarding-trial-paid-enterprise-playbook.md`: product-owner onboarding, licensing, infrastructure, and commercialization playbook for trial, paid, and enterprise clients.
 - `docs/installer-runbook.md`: step-by-step installer guideline for full-provision and BYO infrastructure modes.
 - `docs/sensitive-client-data-strategy.md`: repository ownership and sensitive client data handling model.
+- `docs/private-ecr-image-distribution.md`: private ECR image publishing, client pull access, and container extraction risk model.
 
 ## Quick Start
 
@@ -48,3 +49,18 @@ bash secure_SDLC_Platform/scripts/validate.sh -f regeneron-trial.local.yaml
 ```
 
 See `docs/installer-runbook.md` for the full installation guide.
+
+## Current Hardened Product Image Contract
+
+Trial and enterprise installs should use Horizon private ECR image references, not public DockerHub references:
+
+| Component | Private ECR image |
+| --- | --- |
+| Frontend | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/frontend:1.4.18` |
+| Backend | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.21` |
+| Jenkins | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/jenkins:1.0.7` |
+| SonarQube mirror | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/sonarqube:10.4-community` |
+| Container/IaC scanner | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/trivy-scanner:1.1.2` |
+| Policy validation service | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/opa-scanner:1.0.1` |
+
+The backend license contract supports `allowedAwsAccountIds` and `installationId`; set both for every client-hosted trial so a copied deployment cannot be reused freely in another AWS account or installation.

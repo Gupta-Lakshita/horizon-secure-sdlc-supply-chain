@@ -47,6 +47,9 @@ aws:
       namespace: acme-app-prod
   ecr:
     mirrorHorizonImages: true
+    horizonRegistryAccountId: "426946630837"
+    horizonRegistryRegion: us-east-1
+    horizonRegistry: 426946630837.dkr.ecr.us-east-1.amazonaws.com
     productRepositoryPrefix: horizon
     applicationRepositoryPrefix: acme-devsecops
   notifications:
@@ -76,6 +79,9 @@ license:
   allowedEnvironments:
     - DEV
     - QA
+  allowedAwsAccountIds:
+    - "111122223333"
+  installationId: acme-fintech-horizon-trial-001
   limits:
     maxRepos: 3
     maxBuildsPerMonth: 25
@@ -94,19 +100,26 @@ identity:
 components:
   frontend:
     enabled: true
-    image: docker.io/ankur1825/horizon-self-service-cicd-pipeline-ui-dashboard:1.4.16
+    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/frontend:1.4.18
   backend:
     enabled: true
-    image: docker.io/ankur1825/horizon-self-service-cicd-pipeline-backend:1.4.19
+    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.21
   jenkins:
     enabled: true
-    image: docker.io/ankur1825/horizon-jenkins:1.0.7
+    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/jenkins:1.0.7
     sharedLibrary:
       source: private-git # private-git | release-bundle | baked-in-image
       repository: git@github.com:ankur1825/jenkins-shared-library.git
       branch: main
   sonarqube:
     enabled: true
+    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/sonarqube:10.4-community
+  trivy:
+    enabled: true
+    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/trivy-scanner:1.1.2
+  opa:
+    enabled: true
+    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/opa-scanner:1.0.1
   openldap:
     enabled: false
   keycloak:
