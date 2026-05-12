@@ -1,6 +1,6 @@
 # Example client-hosted values.
 # Copy this file to client-values.local.yaml and replace placeholders.
-# Do not commit real client values, secrets, activation tokens, or Terraform backend details.
+# Do not commit real client values, secrets, activation tokens, Terraform state, or private endpoints.
 
 installer:
   mode: byo-infra # full-provision | byo-infra
@@ -13,13 +13,19 @@ client:
   industry: fintech
   dataBoundary: client-hosted
 
+# The platform runs from client DNS. Application ingress hosts can be resolved from the
+# Environment Catalog or supplied by the application deployment workflow.
 domain:
   baseDomain: devsecops.acme-demo.com
   frontendHost: devsecops.acme-demo.com
   backendPath: /pipeline/api
   jenkinsHost: jenkins.devsecops.acme-demo.com
   keycloakHost: keycloak.devsecops.acme-demo.com
+  sonarqubeHost: sonar.devsecops.acme-demo.com
 
+# Bootstrap AWS details are retained for Terraform/preflight compatibility.
+# Runtime pipeline forms should not ask developers for these values; developers select
+# a target environment and the backend resolves details from environmentCatalog.
 aws:
   region: us-east-1
   artifactBucket: acme-fintech-devsecops-artifacts
@@ -28,32 +34,101 @@ aws:
       accountId: "111122223333"
       roleArn: arn:aws:iam::111122223333:role/HorizonDevDeployRole
       clusterName: acme-dev-eks
-      namespace: acme-app-dev
+      namespace: acme-devsecops-dev
     qa:
       accountId: "111122223333"
       roleArn: arn:aws:iam::111122223333:role/HorizonQaDeployRole
       clusterName: acme-qa-eks
-      namespace: acme-app-qa
+      namespace: acme-devsecops-qa
     stage:
       accountId: "111122223333"
       roleArn: arn:aws:iam::111122223333:role/HorizonStageDeployRole
       clusterName: acme-stage-eks
-      namespace: acme-app-stage
+      namespace: acme-devsecops-stage
     prod:
       accountId: "444455556666"
       sourceRoleArn: arn:aws:iam::111122223333:role/HorizonProdPromotionSourceRole
       targetRoleArn: arn:aws:iam::444455556666:role/HorizonProdPromotionTargetRole
       clusterName: acme-prod-eks
-      namespace: acme-app-prod
+      namespace: acme-devsecops-prod
   ecr:
     mirrorHorizonImages: true
     horizonRegistryAccountId: "426946630837"
     horizonRegistryRegion: us-east-1
     horizonRegistry: 426946630837.dkr.ecr.us-east-1.amazonaws.com
+    horizonSourceRegistry: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon
     productRepositoryPrefix: horizon
     applicationRepositoryPrefix: acme-devsecops
   notifications:
     snsTopicArn: arn:aws:sns:us-east-1:111122223333:acme-devsecops-notifications
+
+# Admin-owned catalog. The installer seeds this into the platform namespace.
+# The backend serves it to the UI and resolves AWS/EKS/S3/ECR values before triggering Jenkins.
+# Developers should only select Target Environment; they should not type AWS account IDs, role ARNs,
+# cluster names, or artifact buckets in day-to-day pipeline requests.
+environmentCatalog:
+  environments:
+    - name: DEV
+      displayName: Development
+      accountTier: nonprod
+      awsAccountId: "111122223333"
+      awsRegion: us-east-1
+      ecrRegistry: 111122223333.dkr.ecr.us-east-1.amazonaws.com
+      ecrRepositoryTemplate: acme-devsecops/${projectName}
+      artifactBucket: acme-fintech-devsecops-artifacts
+      clientAwsRoleArn: arn:aws:iam::111122223333:role/HorizonDevDeployRole
+      nonprodAwsRoleArn: arn:aws:iam::111122223333:role/HorizonDevDeployRole
+      clusterName: acme-dev-eks
+      namespaceStrategy: per-app
+      namespaceTemplate: ${clientId}-${projectName}-dev
+      snsTopicArn: arn:aws:sns:us-east-1:111122223333:acme-devsecops-notifications
+      isActive: true
+    - name: QA
+      displayName: Quality Assurance
+      accountTier: nonprod
+      awsAccountId: "111122223333"
+      awsRegion: us-east-1
+      ecrRegistry: 111122223333.dkr.ecr.us-east-1.amazonaws.com
+      ecrRepositoryTemplate: acme-devsecops/${projectName}
+      artifactBucket: acme-fintech-devsecops-artifacts
+      clientAwsRoleArn: arn:aws:iam::111122223333:role/HorizonQaDeployRole
+      nonprodAwsRoleArn: arn:aws:iam::111122223333:role/HorizonQaDeployRole
+      clusterName: acme-qa-eks
+      namespaceStrategy: per-app
+      namespaceTemplate: ${clientId}-${projectName}-qa
+      snsTopicArn: arn:aws:sns:us-east-1:111122223333:acme-devsecops-notifications
+      isActive: true
+    - name: STAGE
+      displayName: Stage
+      accountTier: nonprod
+      awsAccountId: "111122223333"
+      awsRegion: us-east-1
+      ecrRegistry: 111122223333.dkr.ecr.us-east-1.amazonaws.com
+      ecrRepositoryTemplate: acme-devsecops/${projectName}
+      artifactBucket: acme-fintech-devsecops-artifacts
+      clientAwsRoleArn: arn:aws:iam::111122223333:role/HorizonStageDeployRole
+      nonprodAwsRoleArn: arn:aws:iam::111122223333:role/HorizonStageDeployRole
+      clusterName: acme-stage-eks
+      namespaceStrategy: per-app
+      namespaceTemplate: ${clientId}-${projectName}-stage
+      snsTopicArn: arn:aws:sns:us-east-1:111122223333:acme-devsecops-notifications
+      isActive: true
+    - name: PROD
+      displayName: Production
+      accountTier: prod
+      awsAccountId: "444455556666"
+      awsRegion: us-east-1
+      ecrRegistry: 444455556666.dkr.ecr.us-east-1.amazonaws.com
+      ecrRepositoryTemplate: acme-devsecops/${projectName}
+      artifactBucket: acme-fintech-prod-devsecops-artifacts
+      sourceAwsRoleArn: arn:aws:iam::111122223333:role/HorizonProdPromotionSourceRole
+      targetAwsRoleArn: arn:aws:iam::444455556666:role/HorizonProdPromotionTargetRole
+      clusterName: acme-prod-eks
+      namespaceStrategy: per-app
+      namespaceTemplate: ${clientId}-${projectName}-prod
+      snsTopicArn: arn:aws:sns:us-east-1:444455556666:acme-devsecops-prod-notifications
+      requiresApproval: true
+      isActive: true
 
 license:
   enforcementEnabled: true
@@ -81,6 +156,7 @@ license:
     - QA
   allowedAwsAccountIds:
     - "111122223333"
+    - "444455556666"
   installationId: acme-fintech-horizon-trial-001
   limits:
     maxRepos: 3
@@ -88,22 +164,41 @@ license:
     maxUsers: 10
 
 identity:
-  mode: client-oidc # client-oidc | client-saml | existing-ldap | managed-keycloak-openldap
+  mode: existing-ldap # client-oidc | client-saml | existing-ldap | managed-keycloak-openldap
   keycloak:
     deploy: true
   ldap:
-    enabled: false
-    host: ldap.client.example
-    baseDn: dc=client,dc=example
+    enabled: true
+    host: ldaps://ldap.acme-demo.com:636
+    baseDn: dc=acme-demo,dc=com
+    userBaseDn: ou=Users,dc=acme-demo,dc=com
     bindSecretName: client-ldap-bind
+    groupBaseDn: ou=Groups,dc=acme-demo,dc=com
+    groupSearchFilter: "(&(objectClass=group)(member={user_dn}))"
+    groupMemberAttribute: member
+    groupNameAttribute: cn
+    userGroupAttribute: memberOf
+    # Client-specific AD/LDAP groups are mapped to generic Horizon roles.
+    # Values may be group CNs or full group DNs. The product UI and API expose roles, not raw group names.
+    roleGroupMappings:
+      platform-admin:
+        - CN=Acme-DevSecOps-Admins,OU=Groups,DC=acme-demo,DC=com
+      developer:
+        - CN=Acme-Developers,OU=Groups,DC=acme-demo,DC=com
+      qa:
+        - CN=Acme-QA-Engineers,OU=Groups,DC=acme-demo,DC=com
+      release-manager:
+        - CN=Acme-Release-Managers,OU=Groups,DC=acme-demo,DC=com
+      viewer:
+        - CN=Acme-Auditors,OU=Groups,DC=acme-demo,DC=com
 
 components:
   frontend:
     enabled: true
-    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/frontend:1.4.18
+    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/frontend:1.4.19
   backend:
     enabled: true
-    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.21
+    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.22
   jenkins:
     enabled: true
     image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/jenkins:1.0.8

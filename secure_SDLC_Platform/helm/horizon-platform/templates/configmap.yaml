@@ -12,6 +12,7 @@ data:
   CLIENT_INDUSTRY: {{ .Values.client.industry | quote }}
   AWS_REGION: {{ .Values.aws.region | quote }}
   ARTIFACT_BUCKET: {{ .Values.aws.artifactBucket | quote }}
+  ENVIRONMENT_CATALOG_JSON: {{ toJson .Values.environmentCatalog.environments | quote }}
   DEV_ACCOUNT_ID: {{ .Values.aws.accounts.dev.accountId | quote }}
   DEV_ROLE_ARN: {{ .Values.aws.accounts.dev.roleArn | quote }}
   DEV_CLUSTER_NAME: {{ .Values.aws.accounts.dev.clusterName | quote }}
@@ -20,6 +21,10 @@ data:
   QA_ROLE_ARN: {{ .Values.aws.accounts.qa.roleArn | quote }}
   QA_CLUSTER_NAME: {{ .Values.aws.accounts.qa.clusterName | quote }}
   QA_NAMESPACE: {{ .Values.aws.accounts.qa.namespace | quote }}
+  STAGE_ACCOUNT_ID: {{ .Values.aws.accounts.stage.accountId | quote }}
+  STAGE_ROLE_ARN: {{ .Values.aws.accounts.stage.roleArn | quote }}
+  STAGE_CLUSTER_NAME: {{ .Values.aws.accounts.stage.clusterName | quote }}
+  STAGE_NAMESPACE: {{ .Values.aws.accounts.stage.namespace | quote }}
   PROD_ACCOUNT_ID: {{ .Values.aws.accounts.prod.accountId | quote }}
   PROD_SOURCE_ROLE_ARN: {{ .Values.aws.accounts.prod.sourceRoleArn | quote }}
   PROD_TARGET_ROLE_ARN: {{ .Values.aws.accounts.prod.targetRoleArn | quote }}
@@ -33,3 +38,13 @@ data:
   LICENSE_RENEWAL_CHECK_HOURS: {{ .Values.license.renewalCheckHours | quote }}
   IDENTITY_MODE: {{ .Values.identity.mode | quote }}
   HORIZON_PRODUCT_REGISTRY: {{ .Values.aws.ecr.horizonRegistry | default "" | quote }}
+  LDAP_ENABLED: {{ .Values.identity.ldap.enabled | quote }}
+  LDAP_HOST: {{ .Values.identity.ldap.host | quote }}
+  LDAP_BASE_DN: {{ .Values.identity.ldap.baseDn | quote }}
+  LDAP_USER_BASE_DN: {{ .Values.identity.ldap.userBaseDn | quote }}
+  LDAP_GROUP_BASE_DN: {{ .Values.identity.ldap.groupBaseDn | quote }}
+  LDAP_GROUP_SEARCH_FILTER: {{ .Values.identity.ldap.groupSearchFilter | quote }}
+  LDAP_GROUP_MEMBER_ATTRIBUTE: {{ .Values.identity.ldap.groupMemberAttribute | quote }}
+  LDAP_GROUP_NAME_ATTRIBUTE: {{ .Values.identity.ldap.groupNameAttribute | quote }}
+  LDAP_USER_GROUP_ATTRIBUTE: {{ .Values.identity.ldap.userGroupAttribute | quote }}
+  LDAP_ROLE_GROUP_MAPPINGS: {{ toJson .Values.identity.ldap.roleGroupMappings | quote }}

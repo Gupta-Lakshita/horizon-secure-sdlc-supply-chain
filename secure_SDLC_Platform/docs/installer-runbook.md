@@ -8,14 +8,15 @@
 4. [DEV/QA/PROD Account Architecture](#devqaprod-account-architecture)
 5. [Prerequisites](#prerequisites)
 6. [Client Values File](#client-values-file)
-7. [Preflight Validation](#preflight-validation)
-8. [Mode 1: Full Platform Provisioning](#mode-1-full-platform-provisioning)
-9. [Mode 2: Bring Your Own Infrastructure](#mode-2-bring-your-own-infrastructure)
-10. [Online License Sync](#online-license-sync)
-11. [Identity Configuration](#identity-configuration)
-12. [Validation](#validation)
-13. [Upgrade and Renewal](#upgrade-and-renewal)
-14. [Troubleshooting](#troubleshooting)
+7. [Environment Catalog and Role Mapping](#environment-catalog-and-role-mapping)
+8. [Preflight Validation](#preflight-validation)
+9. [Mode 1: Full Platform Provisioning](#mode-1-full-platform-provisioning)
+10. [Mode 2: Bring Your Own Infrastructure](#mode-2-bring-your-own-infrastructure)
+11. [Online License Sync](#online-license-sync)
+12. [Identity Configuration](#identity-configuration)
+13. [Validation](#validation)
+14. [Upgrade and Renewal](#upgrade-and-renewal)
+15. [Troubleshooting](#troubleshooting)
 
 ## Purpose
 
@@ -143,6 +144,44 @@ cp secure_SDLC_Platform/examples/regeneron-trial-values.yaml regeneron-trial.loc
 ```
 
 Never commit `*.local.yaml`.
+
+For the detailed structure, see `docs/client-values-reference.md`. The important model change is that the installer seeds an admin-owned `environmentCatalog` and generic `identity.ldap.roleGroupMappings`. Developers should not type AWS account IDs, role ARNs, EKS cluster names, or S3 buckets during normal pipeline requests.
+
+## Environment Catalog and Role Mapping
+
+The Environment Catalog is the runtime source of truth for DEV, QA, STAGE, and PROD. It is stored in the Horizon platform namespace with the backend configuration and may later be edited by a platform admin through the admin UI. It points to the client application clusters, but it should not be duplicated in every application namespace.
+
+Expected flow:
+
+1. Client platform/admin team fills `environmentCatalog.environments` in `client-values.yaml`.
+2. Installer writes the catalog into the platform config.
+3. Backend serves active environments to the UI.
+4. Developer selects only `Target Environment`.
+5. Backend resolves ECR, S3, IAM role, EKS cluster, namespace strategy, and notification values before triggering Jenkins.
+6. Jenkins updates kubeconfig for the selected cluster and deploys into the resolved namespace.
+
+Generic role mapping works the same way. A client can use any AD/LDAP group names; Horizon maps those groups to stable product roles such as `platform-admin`, `developer`, `qa`, `release-manager`, and `viewer`. Use full group DNs when possible.
+
+Example:
+
+```yaml
+identity:
+  mode: existing-ldap
+  ldap:
+    enabled: true
+    groupBaseDn: ou=Groups,dc=client,dc=example
+    roleGroupMappings:
+      platform-admin:
+        - CN=Client-DevSecOps-Admins,OU=Groups,DC=client,DC=example
+      developer:
+        - CN=Client-App-Developers,OU=Groups,DC=client,DC=example
+      qa:
+        - CN=Client-QA-Automation,OU=Groups,DC=client,DC=example
+      release-manager:
+        - CN=Client-Release-Managers,OU=Groups,DC=client,DC=example
+      viewer:
+        - CN=Client-Auditors,OU=Groups,DC=client,DC=example
+```
 
 ## Preflight Validation
 
@@ -290,6 +329,7 @@ Enterprise recommendation:
 1. Use client IdP for production.
 2. Use Keycloak as broker only when it simplifies product integration.
 3. Use OpenLDAP only for trial/lab or when client explicitly requires LDAP.
+4. Keep client-specific group names in `identity.ldap.roleGroupMappings`; the product should expose generic roles, not raw client group names.
 
 ## Validation
 
@@ -300,10 +340,12 @@ After install, validate:
 3. License status returns active.
 4. Jenkins login works.
 5. Identity login works for a non-admin user.
-6. ECR push permission works.
-7. S3 artifact upload works.
-8. Devops Pipeline can create a Jenkins job.
-9. Test Devops Pipeline can publish findings/report evidence.
+6. Platform admin sees Client, Environment Catalog, and License pages; developer/QA users do not.
+7. `GET /pipeline/api/environment-catalog` returns active environments from the values file.
+8. ECR push permission works.
+9. S3 artifact upload works.
+10. Devops Pipeline can create a Jenkins job.
+11. Test Devops Pipeline can publish findings/report evidence.
 
 Run:
 
@@ -340,4 +382,6 @@ Offline fallback:
 | Jenkins cannot deploy | Role ARN lacks EKS/ECR/S3 permissions. | Check environment role mapping and AWS STS caller identity. |
 | Frontend loads but backend fails | Ingress path or backend URL mismatch. | Validate `domain.backendPath` and ingress rules. |
 | LDAP login fails | Bind DN, base DN, TLS, or group filter mismatch. | Test LDAP bind from Keycloak pod. |
+| User can log in but sees wrong menus | LDAP/AD group did not map to a product role. | Check `LDAP_ROLE_GROUP_MAPPINGS`, group DNs/CNs, and backend `/me` response. |
+| Developer form still needs AWS fields | Environment Catalog was not seeded or frontend is using an older release. | Validate `ENVIRONMENT_CATALOG_JSON`, backend `/environment-catalog`, and frontend `1.4.19` or newer. |
 | ECR push fails | Missing auth, wrong account ID, or repository does not exist. | Validate `aws ecr get-login-password` and repository mapping. |

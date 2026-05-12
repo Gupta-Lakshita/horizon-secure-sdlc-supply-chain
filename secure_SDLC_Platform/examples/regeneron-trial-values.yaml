@@ -1,6 +1,6 @@
 # Example Regeneron-style trial values.
-# Copy to regeneron-trial.local.yaml and replace placeholders.
-# Do not commit real client values, secrets, activation tokens, or Terraform backend details.
+# Copy this file to regeneron-trial.local.yaml and replace placeholders.
+# Do not commit real client values, secrets, activation tokens, Terraform state, or private endpoints.
 
 installer:
   mode: full-provision # full-provision | byo-infra
@@ -13,6 +13,8 @@ client:
   industry: healthcare-pharma
   dataBoundary: client-hosted
 
+# The platform runs from client DNS. Application ingress hosts can be resolved from the
+# Environment Catalog or supplied by the application deployment workflow.
 domain:
   baseDomain: devsecops.regeneron.example
   frontendHost: horizon.devsecops.regeneron.example
@@ -21,41 +23,112 @@ domain:
   keycloakHost: keycloak.devsecops.regeneron.example
   sonarqubeHost: sonar.devsecops.regeneron.example
 
+# Bootstrap AWS details are retained for Terraform/preflight compatibility.
+# Runtime pipeline forms should not ask developers for these values; developers select
+# a target environment and the backend resolves details from environmentCatalog.
 aws:
   region: us-east-1
   artifactBucket: regeneron-devsecops-artifacts
-  kmsKeyAlias: alias/regeneron-horizon-devsecops
   accounts:
     dev:
       accountId: "111111111111"
       roleArn: arn:aws:iam::111111111111:role/HorizonDevDeployRole
       clusterName: regeneron-dev-eks
-      namespace: regeneron-app-dev
+      namespace: regeneron-devsecops-dev
     qa:
-      accountId: "222222222222"
-      roleArn: arn:aws:iam::222222222222:role/HorizonQaDeployRole
+      accountId: "111111111111"
+      roleArn: arn:aws:iam::111111111111:role/HorizonQaDeployRole
       clusterName: regeneron-qa-eks
-      namespace: regeneron-app-qa
+      namespace: regeneron-devsecops-qa
     stage:
-      accountId: "222222222222"
-      roleArn: arn:aws:iam::222222222222:role/HorizonStageDeployRole
+      accountId: "111111111111"
+      roleArn: arn:aws:iam::111111111111:role/HorizonStageDeployRole
       clusterName: regeneron-stage-eks
-      namespace: regeneron-app-stage
+      namespace: regeneron-devsecops-stage
     prod:
       accountId: "333333333333"
-      sourceRoleArn: arn:aws:iam::222222222222:role/HorizonProdPromotionSourceRole
+      sourceRoleArn: arn:aws:iam::111111111111:role/HorizonProdPromotionSourceRole
       targetRoleArn: arn:aws:iam::333333333333:role/HorizonProdPromotionTargetRole
       clusterName: regeneron-prod-eks
-      namespace: regeneron-app-prod
+      namespace: regeneron-devsecops-prod
   ecr:
     mirrorHorizonImages: true
     horizonRegistryAccountId: "426946630837"
     horizonRegistryRegion: us-east-1
     horizonRegistry: 426946630837.dkr.ecr.us-east-1.amazonaws.com
+    horizonSourceRegistry: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon
     productRepositoryPrefix: horizon
     applicationRepositoryPrefix: regeneron-devsecops
   notifications:
     snsTopicArn: arn:aws:sns:us-east-1:111111111111:regeneron-devsecops-notifications
+
+# Admin-owned catalog. The installer seeds this into the platform namespace.
+# The backend serves it to the UI and resolves AWS/EKS/S3/ECR values before triggering Jenkins.
+# Developers should only select Target Environment; they should not type AWS account IDs, role ARNs,
+# cluster names, or artifact buckets in day-to-day pipeline requests.
+environmentCatalog:
+  environments:
+    - name: DEV
+      displayName: Development
+      accountTier: nonprod
+      awsAccountId: "111111111111"
+      awsRegion: us-east-1
+      ecrRegistry: 111111111111.dkr.ecr.us-east-1.amazonaws.com
+      ecrRepositoryTemplate: regeneron-devsecops/${projectName}
+      artifactBucket: regeneron-devsecops-artifacts
+      clientAwsRoleArn: arn:aws:iam::111111111111:role/HorizonDevDeployRole
+      nonprodAwsRoleArn: arn:aws:iam::111111111111:role/HorizonDevDeployRole
+      clusterName: regeneron-dev-eks
+      namespaceStrategy: per-app
+      namespaceTemplate: ${clientId}-${projectName}-dev
+      snsTopicArn: arn:aws:sns:us-east-1:111111111111:regeneron-devsecops-notifications
+      isActive: true
+    - name: QA
+      displayName: Quality Assurance
+      accountTier: nonprod
+      awsAccountId: "111111111111"
+      awsRegion: us-east-1
+      ecrRegistry: 111111111111.dkr.ecr.us-east-1.amazonaws.com
+      ecrRepositoryTemplate: regeneron-devsecops/${projectName}
+      artifactBucket: regeneron-devsecops-artifacts
+      clientAwsRoleArn: arn:aws:iam::111111111111:role/HorizonQaDeployRole
+      nonprodAwsRoleArn: arn:aws:iam::111111111111:role/HorizonQaDeployRole
+      clusterName: regeneron-qa-eks
+      namespaceStrategy: per-app
+      namespaceTemplate: ${clientId}-${projectName}-qa
+      snsTopicArn: arn:aws:sns:us-east-1:111111111111:regeneron-devsecops-notifications
+      isActive: true
+    - name: STAGE
+      displayName: Stage
+      accountTier: nonprod
+      awsAccountId: "111111111111"
+      awsRegion: us-east-1
+      ecrRegistry: 111111111111.dkr.ecr.us-east-1.amazonaws.com
+      ecrRepositoryTemplate: regeneron-devsecops/${projectName}
+      artifactBucket: regeneron-devsecops-artifacts
+      clientAwsRoleArn: arn:aws:iam::111111111111:role/HorizonStageDeployRole
+      nonprodAwsRoleArn: arn:aws:iam::111111111111:role/HorizonStageDeployRole
+      clusterName: regeneron-stage-eks
+      namespaceStrategy: per-app
+      namespaceTemplate: ${clientId}-${projectName}-stage
+      snsTopicArn: arn:aws:sns:us-east-1:111111111111:regeneron-devsecops-notifications
+      isActive: true
+    - name: PROD
+      displayName: Production
+      accountTier: prod
+      awsAccountId: "333333333333"
+      awsRegion: us-east-1
+      ecrRegistry: 333333333333.dkr.ecr.us-east-1.amazonaws.com
+      ecrRepositoryTemplate: regeneron-devsecops/${projectName}
+      artifactBucket: regeneron-prod-devsecops-artifacts
+      sourceAwsRoleArn: arn:aws:iam::111111111111:role/HorizonProdPromotionSourceRole
+      targetAwsRoleArn: arn:aws:iam::333333333333:role/HorizonProdPromotionTargetRole
+      clusterName: regeneron-prod-eks
+      namespaceStrategy: per-app
+      namespaceTemplate: ${clientId}-${projectName}-prod
+      snsTopicArn: arn:aws:sns:us-east-1:333333333333:regeneron-devsecops-prod-notifications
+      requiresApproval: true
+      isActive: true
 
 license:
   enforcementEnabled: true
@@ -83,7 +156,7 @@ license:
     - QA
   allowedAwsAccountIds:
     - "111111111111"
-    - "222222222222"
+    - "333333333333"
   installationId: regeneron-healthcare-horizon-trial-001
   limits:
     maxRepos: 3
@@ -91,26 +164,41 @@ license:
     maxUsers: 10
 
 identity:
-  mode: client-oidc # client-oidc | client-saml | existing-ldap | managed-keycloak-openldap
+  mode: existing-ldap # client-oidc | client-saml | existing-ldap | managed-keycloak-openldap
   keycloak:
     deploy: true
-    brokerClientId: horizon-devsecops
-  oidc:
-    issuerUrl: https://idp.regeneron.example/oauth2/default
-    clientIdSecretName: regeneron-oidc-client
   ldap:
-    enabled: false
-    host: ldap.regeneron.example
+    enabled: true
+    host: ldaps://ldap.regeneron.example:636
     baseDn: dc=regeneron,dc=example
-    bindSecretName: regeneron-ldap-bind
+    userBaseDn: ou=Users,dc=regeneron,dc=example
+    bindSecretName: client-ldap-bind
+    groupBaseDn: ou=Security Groups,dc=regeneron,dc=example
+    groupSearchFilter: "(&(objectClass=group)(member={user_dn}))"
+    groupMemberAttribute: member
+    groupNameAttribute: cn
+    userGroupAttribute: memberOf
+    # Client-specific AD/LDAP groups are mapped to generic Horizon roles.
+    # Values may be group CNs or full group DNs. The product UI and API expose roles, not raw group names.
+    roleGroupMappings:
+      platform-admin:
+        - CN=REGN-Horizon-Platform-Admins,OU=Security Groups,DC=regeneron,DC=example
+      developer:
+        - CN=REGN-Application-Developers,OU=Security Groups,DC=regeneron,DC=example
+      qa:
+        - CN=REGN-QA-Automation,OU=Security Groups,DC=regeneron,DC=example
+      release-manager:
+        - CN=REGN-Release-Managers,OU=Security Groups,DC=regeneron,DC=example
+      viewer:
+        - CN=REGN-Security-Auditors,OU=Security Groups,DC=regeneron,DC=example
 
 components:
   frontend:
     enabled: true
-    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/frontend:1.4.18
+    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/frontend:1.4.19
   backend:
     enabled: true
-    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.21
+    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.22
   jenkins:
     enabled: true
     image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/jenkins:1.0.8

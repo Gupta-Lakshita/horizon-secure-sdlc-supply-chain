@@ -211,16 +211,18 @@ Recommended role separation:
 
 6. Mirror or authorize Horizon images.
 
-Preferred enterprise approach:
+Preferred enterprise approach is to pull from the private Horizon release registry or let Horizon mirror the approved release into the client ECR during onboarding.
 
 ```bash
-docker pull docker.io/ankur1825/horizon-self-service-cicd-pipeline-backend:<version>
-docker tag docker.io/ankur1825/horizon-self-service-cicd-pipeline-backend:<version> \
-  <client-account>.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:<version>
-docker push <client-account>.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:<version>
+aws ecr get-login-password --region us-east-1   | docker login --username AWS --password-stdin 426946630837.dkr.ecr.us-east-1.amazonaws.com
+
+# Example: mirror backend release from Horizon ECR into client ECR.
+docker pull 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.22
+docker tag 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.22   <client-account>.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.22
+docker push <client-account>.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.22
 ```
 
-Repeat for frontend, Jenkins, scanner images, and required utility images.
+Repeat for frontend, Jenkins, scanner images, and required utility images. For regulated clients, pin deployments by image digest in the approved release record.
 
 7. Install Horizon with Helm values.
 
@@ -265,14 +267,9 @@ Recommended options:
 
 1. Connect Horizon frontend/backend to Keycloak, and federate Keycloak to Okta/Azure AD/Ping using OIDC or SAML.
 2. Connect Jenkins and SonarQube to the same IdP through OIDC/SAML.
-3. Map client groups to Horizon roles:
-   - `horizon-admin`
-   - `horizon-developer`
-   - `horizon-qa`
-   - `horizon-security`
-   - `horizon-approver`
+3. Map client AD/LDAP groups to generic Horizon product roles in `identity.ldap.roleGroupMappings`. The product roles are `platform-admin`, `developer`, `qa`, `release-manager`, and `viewer`.
 
-This gives the client MFA, password policy, access reviews, audit, and offboarding through their normal enterprise process.
+This gives the client MFA, password policy, access reviews, audit, and offboarding through their normal enterprise process while allowing each client to keep its own group naming convention.
 
 ### Trial Lab Model: Keycloak and OpenLDAP
 
@@ -540,40 +537,64 @@ client:
   id: regeneron-healthcare
   name: "Regeneron"
   industry: healthcare-pharma
-  environment: EKS-NONPROD
 
 domain:
   baseDomain: devsecops.regeneron.example
-  frontendHost: devsecops.regeneron.example
+  frontendHost: horizon.devsecops.regeneron.example
   backendPath: /pipeline/api
   jenkinsHost: jenkins.devsecops.regeneron.example
   keycloakHost: keycloak.devsecops.regeneron.example
 
-aws:
-  region: us-east-1
-  accountId: "123456789012"
-  ecrRegistry: "123456789012"
-  artifactBucket: regeneron-devsecops-artifacts
-  executionRoleArn: arn:aws:iam::123456789012:role/HorizonPlatformExecutionRole
-  snsTopicArn: arn:aws:sns:us-east-1:123456789012:regeneron-devsecops-notifications
+environmentCatalog:
+  environments:
+    - name: DEV
+      accountTier: nonprod
+      awsAccountId: "111111111111"
+      awsRegion: us-east-1
+      ecrRegistry: 111111111111.dkr.ecr.us-east-1.amazonaws.com
+      ecrRepositoryTemplate: regeneron-devsecops/${projectName}
+      artifactBucket: regeneron-devsecops-artifacts
+      clientAwsRoleArn: arn:aws:iam::111111111111:role/HorizonDevDeployRole
+      clusterName: regeneron-dev-eks
+      namespaceStrategy: per-app
+      namespaceTemplate: ${clientId}-${projectName}-dev
+      isActive: true
+    - name: QA
+      accountTier: nonprod
+      awsAccountId: "111111111111"
+      awsRegion: us-east-1
+      ecrRegistry: 111111111111.dkr.ecr.us-east-1.amazonaws.com
+      ecrRepositoryTemplate: regeneron-devsecops/${projectName}
+      artifactBucket: regeneron-devsecops-artifacts
+      clientAwsRoleArn: arn:aws:iam::111111111111:role/HorizonQaDeployRole
+      clusterName: regeneron-qa-eks
+      namespaceStrategy: per-app
+      namespaceTemplate: ${clientId}-${projectName}-qa
+      isActive: true
+
+identity:
+  mode: existing-ldap
+  ldap:
+    enabled: true
+    host: ldaps://ldap.regeneron.example:636
+    baseDn: dc=regeneron,dc=example
+    groupBaseDn: ou=Security Groups,dc=regeneron,dc=example
+    roleGroupMappings:
+      platform-admin:
+        - CN=REGN-Horizon-Platform-Admins,OU=Security Groups,DC=regeneron,DC=example
+      developer:
+        - CN=REGN-Application-Developers,OU=Security Groups,DC=regeneron,DC=example
+      qa:
+        - CN=REGN-QA-Automation,OU=Security Groups,DC=regeneron,DC=example
+      release-manager:
+        - CN=REGN-Release-Managers,OU=Security Groups,DC=regeneron,DC=example
+      viewer:
+        - CN=REGN-Security-Auditors,OU=Security Groups,DC=regeneron,DC=example
 
 license:
   enforcementEnabled: true
-  type: trial
-  key: replace-with-issued-license-key
-  expiresAt: "2026-06-07T23:59:59Z"
-  enabledPipelines:
-    - Devops Pipeline
-    - Test Devops Pipeline
-  enabledFeatures:
-    - build
-    - artifact_publish
-    - code_scan
-    - image_scan
-    - policy_validation
-    - static_application_security
-    - test_suites
-    - notifications
+  mode: online-sync
+  clientId: regeneron-healthcare
   allowedEnvironments:
     - DEV
     - QA
@@ -593,7 +614,7 @@ Preferred:
 
 1. Connect Keycloak to client Okta/Azure AD/Ping.
 2. Configure OIDC/SAML.
-3. Map client groups to Horizon roles.
+3. Map client groups to generic Horizon roles through `identity.ldap.roleGroupMappings`.
 4. Enforce MFA through the client IdP.
 
 Fallback trial:
@@ -610,7 +631,7 @@ Register:
 1. Git provider credentials.
 2. ECR repository.
 3. S3 artifact bucket.
-4. DEV/QA cluster and namespace mapping.
+4. Environment Catalog entries for DEV/QA/STAGE/PROD cluster, namespace, ECR, S3, and role mapping.
 5. Notification settings.
 6. Optional SonarQube endpoint.
 7. Test suite paths or default framework paths.

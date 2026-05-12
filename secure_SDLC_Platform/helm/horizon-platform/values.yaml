@@ -1,48 +1,140 @@
 installer:
   mode: byo-infra
+  releaseName: horizon-ai-devsecops
   namespace: horizon-platform
 
 client:
   id: example-client
   name: "Example Client"
   industry: unknown
+  dataBoundary: client-hosted
 
+# The platform runs from client DNS. Application ingress hosts can be resolved from the
+# Environment Catalog or supplied by the application deployment workflow.
 domain:
+  baseDomain: example.com
   frontendHost: horizon.example.com
   backendPath: /pipeline/api
   jenkinsHost: jenkins.example.com
   keycloakHost: keycloak.example.com
+  sonarqubeHost: sonar.example.com
 
+# Bootstrap AWS details are retained for Terraform/preflight compatibility.
+# Runtime pipeline forms should not ask developers for these values; developers select
+# a target environment and the backend resolves details from environmentCatalog.
 aws:
   region: us-east-1
   artifactBucket: example-devsecops-artifacts
   accounts:
     dev:
-      accountId: "111111111111"
-      roleArn: arn:aws:iam::111111111111:role/HorizonDevDeployRole
+      accountId: "111122223333"
+      roleArn: arn:aws:iam::111122223333:role/HorizonDevDeployRole
       clusterName: example-dev-eks
       namespace: example-app-dev
     qa:
-      accountId: "222222222222"
-      roleArn: arn:aws:iam::222222222222:role/HorizonQaDeployRole
+      accountId: "111122223333"
+      roleArn: arn:aws:iam::111122223333:role/HorizonQaDeployRole
       clusterName: example-qa-eks
       namespace: example-app-qa
+    stage:
+      accountId: "111122223333"
+      roleArn: arn:aws:iam::111122223333:role/HorizonStageDeployRole
+      clusterName: example-stage-eks
+      namespace: example-app-stage
     prod:
-      accountId: "333333333333"
-      sourceRoleArn: arn:aws:iam::222222222222:role/HorizonProdPromotionSourceRole
-      targetRoleArn: arn:aws:iam::333333333333:role/HorizonProdPromotionTargetRole
+      accountId: "444455556666"
+      sourceRoleArn: arn:aws:iam::111122223333:role/HorizonProdPromotionSourceRole
+      targetRoleArn: arn:aws:iam::444455556666:role/HorizonProdPromotionTargetRole
       clusterName: example-prod-eks
       namespace: example-app-prod
+  ecr:
+    mirrorHorizonImages: true
+    horizonRegistryAccountId: "426946630837"
+    horizonRegistryRegion: us-east-1
+    horizonRegistry: 426946630837.dkr.ecr.us-east-1.amazonaws.com
+    horizonSourceRegistry: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon
+    productRepositoryPrefix: horizon
+    applicationRepositoryPrefix: example-devsecops
+  notifications:
+    snsTopicArn: arn:aws:sns:us-east-1:111122223333:example-devsecops-notifications
+
+# Admin-owned catalog. The installer seeds this into the platform namespace.
+# The backend serves it to the UI and resolves AWS/EKS/S3/ECR values before triggering Jenkins.
+# Developers should only select Target Environment; they should not type AWS account IDs, role ARNs,
+# cluster names, or artifact buckets in day-to-day pipeline requests.
+environmentCatalog:
+  environments:
+    - name: DEV
+      displayName: Development
+      accountTier: nonprod
+      awsAccountId: "111122223333"
+      awsRegion: us-east-1
+      ecrRegistry: 111122223333.dkr.ecr.us-east-1.amazonaws.com
+      ecrRepositoryTemplate: example-devsecops/${projectName}
+      artifactBucket: example-devsecops-artifacts
+      clientAwsRoleArn: arn:aws:iam::111122223333:role/HorizonDevDeployRole
+      nonprodAwsRoleArn: arn:aws:iam::111122223333:role/HorizonDevDeployRole
+      clusterName: example-dev-eks
+      namespaceStrategy: per-app
+      namespaceTemplate: ${clientId}-${projectName}-dev
+      snsTopicArn: arn:aws:sns:us-east-1:111122223333:example-devsecops-notifications
+      isActive: true
+    - name: QA
+      displayName: Quality Assurance
+      accountTier: nonprod
+      awsAccountId: "111122223333"
+      awsRegion: us-east-1
+      ecrRegistry: 111122223333.dkr.ecr.us-east-1.amazonaws.com
+      ecrRepositoryTemplate: example-devsecops/${projectName}
+      artifactBucket: example-devsecops-artifacts
+      clientAwsRoleArn: arn:aws:iam::111122223333:role/HorizonQaDeployRole
+      nonprodAwsRoleArn: arn:aws:iam::111122223333:role/HorizonQaDeployRole
+      clusterName: example-qa-eks
+      namespaceStrategy: per-app
+      namespaceTemplate: ${clientId}-${projectName}-qa
+      snsTopicArn: arn:aws:sns:us-east-1:111122223333:example-devsecops-notifications
+      isActive: true
+    - name: STAGE
+      displayName: Stage
+      accountTier: nonprod
+      awsAccountId: "111122223333"
+      awsRegion: us-east-1
+      ecrRegistry: 111122223333.dkr.ecr.us-east-1.amazonaws.com
+      ecrRepositoryTemplate: example-devsecops/${projectName}
+      artifactBucket: example-devsecops-artifacts
+      clientAwsRoleArn: arn:aws:iam::111122223333:role/HorizonStageDeployRole
+      nonprodAwsRoleArn: arn:aws:iam::111122223333:role/HorizonStageDeployRole
+      clusterName: example-stage-eks
+      namespaceStrategy: per-app
+      namespaceTemplate: ${clientId}-${projectName}-stage
+      snsTopicArn: arn:aws:sns:us-east-1:111122223333:example-devsecops-notifications
+      isActive: true
+    - name: PROD
+      displayName: Production
+      accountTier: prod
+      awsAccountId: "444455556666"
+      awsRegion: us-east-1
+      ecrRegistry: 444455556666.dkr.ecr.us-east-1.amazonaws.com
+      ecrRepositoryTemplate: example-devsecops/${projectName}
+      artifactBucket: example-prod-devsecops-artifacts
+      sourceAwsRoleArn: arn:aws:iam::111122223333:role/HorizonProdPromotionSourceRole
+      targetAwsRoleArn: arn:aws:iam::444455556666:role/HorizonProdPromotionTargetRole
+      clusterName: example-prod-eks
+      namespaceStrategy: per-app
+      namespaceTemplate: ${clientId}-${projectName}-prod
+      snsTopicArn: arn:aws:sns:us-east-1:444455556666:example-app-prod-notifications
+      requiresApproval: true
+      isActive: true
 
 license:
   enforcementEnabled: true
-  mode: online-sync
+  mode: online-sync # online-sync | offline-file
   syncEndpoint: https://license.horizonrelevance.com/api/v1/licenses/sync
   clientId: example-client
   activationTokenSecretName: horizon-license-activation
   renewalCheckHours: 24
   type: trial
-  expiresAt: "2026-06-30T23:59:59Z"
+  expiresAt: "2026-05-28T23:59:59Z"
   enabledPipelines:
     - Devops Pipeline
     - Test Devops Pipeline
@@ -59,38 +151,54 @@ license:
     - DEV
     - QA
   allowedAwsAccountIds:
-    - "111111111111"
-    - "222222222222"
-  installationId: example-client-horizon-installation-001
+    - "111122223333"
+    - "444455556666"
+  installationId: example-client-horizon-trial-001
   limits:
     maxRepos: 3
-    maxBuildsPerMonth: 100
+    maxBuildsPerMonth: 25
     maxUsers: 10
 
 identity:
   mode: client-oidc
+  keycloak:
+    deploy: true
   ldap:
     enabled: false
     host: ""
     baseDn: ""
+    userBaseDn: ""
     bindSecretName: ""
+    groupBaseDn: ""
+    groupSearchFilter: "(&(objectClass=group)(member={user_dn}))"
+    groupMemberAttribute: member
+    groupNameAttribute: cn
+    userGroupAttribute: memberOf
+    # Client-specific AD/LDAP groups are mapped to generic Horizon roles.
+    # Values may be group CNs or full group DNs. The product UI and API expose roles, not raw group names.
+    roleGroupMappings:
+      platform-admin: []
+      developer: []
+      qa: []
+      release-manager: []
+      viewer: []
 
 components:
   frontend:
     enabled: true
-    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/frontend:1.4.18
+    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/frontend:1.4.19
   backend:
     enabled: true
-    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.21
+    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.22
   jenkins:
     enabled: true
     image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/jenkins:1.0.8
-  keycloak:
-    enabled: false
-  openldap:
-    enabled: false
+    sharedLibrary:
+      source: private-git # private-git | release-bundle | baked-in-image
+      repository: git@github.com:ankur1825/jenkins-shared-library.git
+      branch: main
   sonarqube:
-    enabled: false
+    enabled: true
     image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/sonarqube:10.4-community
   trivy:
     enabled: true
@@ -98,3 +206,15 @@ components:
   opa:
     enabled: true
     image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/opa-scanner:1.0.1
+  openldap:
+    enabled: false
+  keycloak:
+    enabled: true
+
+existingInfrastructure:
+  ingressClassName: nginx
+  storageClassName: gp3
+  useExistingVpc: true
+  useExistingEks: true
+  useExistingEcr: true
+  useExistingArtifactBucket: true

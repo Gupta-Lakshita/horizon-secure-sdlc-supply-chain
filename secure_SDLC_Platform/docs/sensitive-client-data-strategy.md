@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document defines how Horizon Relevance should handle installer assets that contain client-sensitive data such as AWS account IDs, role ARNs, cluster names, DNS zones, internal LDAP endpoints, repository URLs, and environment mappings.
+This document defines how Horizon Relevance should handle installer assets that contain client-sensitive data such as AWS account IDs, role ARNs, cluster names, DNS zones, internal LDAP endpoints, repository URLs, Environment Catalog entries, and role mappings.
 
 ## Recommended Approach
 
@@ -30,6 +30,8 @@ Horizon Relevance should maintain the generic installer source. The client shoul
 8. License activation token.
 9. Git provider tokens.
 10. Environment-specific overlays.
+11. Environment Catalog entries.
+12. Client AD/LDAP group mappings.
 
 ## Repository Models
 
@@ -74,6 +76,8 @@ Client values are stored as encrypted artifacts or in the client's secrets manag
 5. Use expiring credentials for trial.
 6. Rotate credentials at trial end or conversion.
 7. Mirror Horizon images into client ECR for enterprise deployments.
+8. Store Environment Catalog values server-side in the platform namespace or backend database; do not rely on browser-side configuration.
+9. Store client group names in role-mapping configuration and expose only generic product roles to the UI.
 
 ## License Activation Token
 
