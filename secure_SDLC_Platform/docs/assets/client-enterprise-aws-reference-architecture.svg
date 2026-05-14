@@ -1,0 +1,248 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1080" viewBox="0 0 1600 1080" role="img" aria-labelledby="title desc">
+  <title id="title">Horizon Relevance Client Enterprise AWS Reference Architecture</title>
+  <desc id="desc">AWS-style client-hosted reference architecture showing Horizon Relevance platform components, AWS services, accounts, environments, security boundaries, pipeline flows, and evidence stores.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#374151"/>
+    </marker>
+    <marker id="arrowBlue" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#1d4ed8"/>
+    </marker>
+    <style>
+      .page { fill:#ffffff; }
+      .title { font:700 26px Arial, Helvetica, sans-serif; fill:#111827; }
+      .subtitle { font:400 15px Arial, Helvetica, sans-serif; fill:#4b5563; }
+      .label { font:700 14px Arial, Helvetica, sans-serif; fill:#111827; }
+      .small { font:400 12px Arial, Helvetica, sans-serif; fill:#374151; }
+      .tiny { font:400 10.5px Arial, Helvetica, sans-serif; fill:#374151; }
+      .caption { font:700 12px Arial, Helvetica, sans-serif; fill:#ffffff; }
+      .boxText { font:700 12px Arial, Helvetica, sans-serif; fill:#111827; }
+      .boxSub { font:400 10.5px Arial, Helvetica, sans-serif; fill:#4b5563; }
+      .awsCloud { fill:#fff; stroke:#111827; stroke-width:2; }
+      .account { fill:#fff; stroke:#ec4899; stroke-width:2; }
+      .vpc { fill:#faf5ff; stroke:#8b5cf6; stroke-width:2; stroke-dasharray:6 4; }
+      .namespace { fill:#f8fafc; stroke:#64748b; stroke-width:1.5; stroke-dasharray:5 4; }
+      .external { fill:#f8fafc; stroke:#64748b; stroke-width:1.5; }
+      .service { fill:#fff; stroke:#cbd5e1; stroke-width:1.2; rx:8; }
+      .network { fill:#e0f2fe; stroke:#0284c7; }
+      .compute { fill:#fff7ed; stroke:#f97316; }
+      .security { fill:#fef2f2; stroke:#dc2626; }
+      .storage { fill:#ecfdf5; stroke:#059669; }
+      .devops { fill:#eef2ff; stroke:#4f46e5; }
+      .analytics { fill:#fdf4ff; stroke:#c026d3; }
+      .awsHeader { fill:#232f3e; }
+      .accountHeader { fill:#fce7f3; stroke:#ec4899; stroke-width:1; }
+      .vpcHeader { fill:#ede9fe; stroke:#8b5cf6; stroke-width:1; }
+      .flow { fill:#0ea5e9; stroke:#0369a1; stroke-width:1; }
+      .flowText { font:700 13px Arial, Helvetica, sans-serif; fill:#ffffff; text-anchor:middle; dominant-baseline:middle; }
+      .line { stroke:#374151; stroke-width:1.8; fill:none; marker-end:url(#arrow); }
+      .lineBlue { stroke:#1d4ed8; stroke-width:2; fill:none; marker-end:url(#arrowBlue); }
+      .lineDashed { stroke:#64748b; stroke-width:1.5; fill:none; stroke-dasharray:5 4; marker-end:url(#arrow); }
+    </style>
+  </defs>
+
+  <rect class="page" x="0" y="0" width="1600" height="1080"/>
+  <text class="title" x="36" y="44">Horizon Relevance AI DevSecOps - Client Enterprise AWS Reference Architecture</text>
+  <text class="subtitle" x="36" y="70">Client-hosted platform model with AWS services, identity, license enforcement, build/test/release pipelines, namespace-scoped EKS access, and audit evidence.</text>
+
+  <!-- External enterprise systems -->
+  <rect class="external" x="30" y="110" width="220" height="810" rx="8"/>
+  <text class="label" x="54" y="140">Client Enterprise</text>
+  <text class="small" x="54" y="162">Users and existing systems</text>
+
+  <rect class="service" x="58" y="195" width="164" height="74" rx="8"/>
+  <text class="boxText" x="140" y="220" text-anchor="middle">Developers / QA</text>
+  <text class="boxSub" x="140" y="240" text-anchor="middle">Release managers</text>
+  <text class="boxSub" x="140" y="256" text-anchor="middle">Platform admins</text>
+
+  <rect class="service security" x="58" y="305" width="164" height="78" rx="8"/>
+  <text class="boxText" x="140" y="330" text-anchor="middle">Client Identity</text>
+  <text class="boxSub" x="140" y="350" text-anchor="middle">LDAP / AD / OIDC</text>
+  <text class="boxSub" x="140" y="366" text-anchor="middle">Group role mapping</text>
+
+  <rect class="service devops" x="58" y="420" width="164" height="86" rx="8"/>
+  <text class="boxText" x="140" y="446" text-anchor="middle">Client Git</text>
+  <text class="boxSub" x="140" y="466" text-anchor="middle">GitHub / GitLab</text>
+  <text class="boxSub" x="140" y="482" text-anchor="middle">Bitbucket</text>
+
+  <rect class="service" x="58" y="548" width="164" height="86" rx="8"/>
+  <text class="boxText" x="140" y="574" text-anchor="middle">Enterprise Mail</text>
+  <text class="boxSub" x="140" y="594" text-anchor="middle">SMTP / SES / relay</text>
+  <text class="boxSub" x="140" y="610" text-anchor="middle">Pipeline notifications</text>
+
+  <rect class="service analytics" x="58" y="676" width="164" height="96" rx="8"/>
+  <text class="boxText" x="140" y="702" text-anchor="middle">Optional ITSM</text>
+  <text class="boxSub" x="140" y="722" text-anchor="middle">Jira / ServiceNow</text>
+  <text class="boxSub" x="140" y="738" text-anchor="middle">GRC / SIEM</text>
+  <text class="boxSub" x="140" y="754" text-anchor="middle">Change evidence</text>
+
+  <!-- Horizon release plane -->
+  <rect class="external" x="280" y="110" width="260" height="250" rx="8"/>
+  <text class="label" x="305" y="140">Horizon Relevance</text>
+  <text class="small" x="305" y="162">Release and license plane</text>
+
+  <rect class="service security" x="306" y="192" width="208" height="56" rx="8"/>
+  <text class="boxText" x="410" y="216" text-anchor="middle">License Sync API</text>
+  <text class="boxSub" x="410" y="235" text-anchor="middle">trial / paid / enterprise</text>
+
+  <rect class="service storage" x="306" y="268" width="208" height="56" rx="8"/>
+  <text class="boxText" x="410" y="292" text-anchor="middle">Private Horizon ECR</text>
+  <text class="boxSub" x="410" y="311" text-anchor="middle">hardened product images</text>
+
+  <!-- AWS Cloud -->
+  <rect class="awsCloud" x="280" y="390" width="1275" height="640" rx="6"/>
+  <rect class="awsHeader" x="280" y="390" width="62" height="44"/>
+  <text class="caption" x="311" y="416" text-anchor="middle">AWS</text>
+  <text class="label" x="356" y="419">Client AWS Cloud</text>
+
+  <!-- Shared platform account -->
+  <rect class="account" x="310" y="455" width="1185" height="300" rx="4"/>
+  <rect class="accountHeader" x="310" y="455" width="1185" height="34"/>
+  <text class="label" x="330" y="477">Client Platform / Shared Services Account</text>
+
+  <rect class="vpc" x="335" y="510" width="725" height="210" rx="4"/>
+  <rect class="vpcHeader" x="335" y="510" width="725" height="30"/>
+  <text class="small" x="354" y="530">Platform VPC</text>
+
+  <rect class="service network" x="360" y="560" width="135" height="65" rx="8"/>
+  <text class="boxText" x="428" y="584" text-anchor="middle">Route 53</text>
+  <text class="boxSub" x="428" y="603" text-anchor="middle">Client DNS</text>
+
+  <rect class="service security" x="360" y="645" width="135" height="55" rx="8"/>
+  <text class="boxText" x="428" y="668" text-anchor="middle">ACM</text>
+  <text class="boxSub" x="428" y="687" text-anchor="middle">TLS certs</text>
+
+  <rect class="service network" x="520" y="585" width="135" height="75" rx="8"/>
+  <text class="boxText" x="588" y="611" text-anchor="middle">ALB</text>
+  <text class="boxSub" x="588" y="630" text-anchor="middle">Ingress</text>
+  <text class="boxSub" x="588" y="646" text-anchor="middle">WAF optional</text>
+
+  <rect class="service compute" x="690" y="550" width="330" height="150" rx="8"/>
+  <text class="boxText" x="855" y="574" text-anchor="middle">Amazon EKS - Horizon Platform Cluster</text>
+  <rect class="namespace" x="710" y="590" width="290" height="88" rx="6"/>
+  <text class="tiny" x="855" y="610" text-anchor="middle">horizon-platform namespace</text>
+  <text class="boxSub" x="855" y="630" text-anchor="middle">Frontend UI | Backend API | Jenkins</text>
+  <text class="boxSub" x="855" y="648" text-anchor="middle">Code quality | Vulnerability | Policy | Test executors</text>
+  <text class="boxSub" x="855" y="666" text-anchor="middle">Helm-managed runtime components</text>
+
+  <!-- Platform account services -->
+  <rect class="service storage" x="1090" y="515" width="170" height="58" rx="8"/>
+  <text class="boxText" x="1175" y="538" text-anchor="middle">Amazon ECR</text>
+  <text class="boxSub" x="1175" y="557" text-anchor="middle">Product image mirror</text>
+
+  <rect class="service storage" x="1285" y="515" width="170" height="58" rx="8"/>
+  <text class="boxText" x="1370" y="538" text-anchor="middle">Amazon S3</text>
+  <text class="boxSub" x="1370" y="557" text-anchor="middle">Artifacts and evidence</text>
+
+  <rect class="service security" x="1090" y="596" width="170" height="58" rx="8"/>
+  <text class="boxText" x="1175" y="619" text-anchor="middle">Secrets Manager</text>
+  <text class="boxSub" x="1175" y="638" text-anchor="middle">tokens, license, secrets</text>
+
+  <rect class="service analytics" x="1285" y="596" width="170" height="58" rx="8"/>
+  <text class="boxText" x="1370" y="619" text-anchor="middle">CloudWatch</text>
+  <text class="boxSub" x="1370" y="638" text-anchor="middle">logs and metrics</text>
+
+  <rect class="service security" x="1090" y="675" width="170" height="58" rx="8"/>
+  <text class="boxText" x="1175" y="698" text-anchor="middle">AWS KMS</text>
+  <text class="boxSub" x="1175" y="717" text-anchor="middle">encryption keys</text>
+
+  <rect class="service analytics" x="1285" y="675" width="170" height="58" rx="8"/>
+  <text class="boxText" x="1370" y="698" text-anchor="middle">CloudTrail</text>
+  <text class="boxSub" x="1370" y="717" text-anchor="middle">audit events</text>
+
+  <!-- IAM and STS center -->
+  <rect class="service security" x="660" y="760" width="300" height="78" rx="8"/>
+  <text class="boxText" x="810" y="786" text-anchor="middle">IAM + STS</text>
+  <text class="boxSub" x="810" y="806" text-anchor="middle">Jenkins IRSA role assumes environment deploy roles</text>
+  <text class="boxSub" x="810" y="822" text-anchor="middle">Backend preflight validates access before pipeline execution</text>
+
+  <!-- Non-prod account -->
+  <rect class="account" x="310" y="855" width="585" height="145" rx="4"/>
+  <rect class="accountHeader" x="310" y="855" width="585" height="30"/>
+  <text class="label" x="330" y="875">Client Non-Prod Account - DEV / QA / STAGE</text>
+
+  <rect class="service compute" x="335" y="905" width="160" height="66" rx="8"/>
+  <text class="boxText" x="415" y="930" text-anchor="middle">Amazon EKS</text>
+  <text class="boxSub" x="415" y="949" text-anchor="middle">namespace-scoped apps</text>
+
+  <rect class="service storage" x="515" y="905" width="160" height="66" rx="8"/>
+  <text class="boxText" x="595" y="930" text-anchor="middle">Amazon ECR</text>
+  <text class="boxSub" x="595" y="949" text-anchor="middle">non-prod images</text>
+
+  <rect class="service storage" x="695" y="905" width="160" height="66" rx="8"/>
+  <text class="boxText" x="775" y="930" text-anchor="middle">Amazon S3</text>
+  <text class="boxSub" x="775" y="949" text-anchor="middle">reports, image.json</text>
+
+  <!-- Prod account -->
+  <rect class="account" x="920" y="855" width="575" height="145" rx="4"/>
+  <rect class="accountHeader" x="920" y="855" width="575" height="30"/>
+  <text class="label" x="940" y="875">Client Production Account</text>
+
+  <rect class="service compute" x="945" y="905" width="160" height="66" rx="8"/>
+  <text class="boxText" x="1025" y="930" text-anchor="middle">Amazon EKS</text>
+  <text class="boxSub" x="1025" y="949" text-anchor="middle">prod namespace</text>
+
+  <rect class="service storage" x="1125" y="905" width="160" height="66" rx="8"/>
+  <text class="boxText" x="1205" y="930" text-anchor="middle">Amazon ECR</text>
+  <text class="boxSub" x="1205" y="949" text-anchor="middle">approved releases</text>
+
+  <rect class="service security" x="1305" y="905" width="160" height="66" rx="8"/>
+  <text class="boxText" x="1385" y="930" text-anchor="middle">Secrets Manager</text>
+  <text class="boxSub" x="1385" y="949" text-anchor="middle">prod app secrets</text>
+
+  <!-- Numbered flow badges -->
+  <circle class="flow" cx="255" cy="225" r="18"/><text class="flowText" x="255" y="225">1</text>
+  <circle class="flow" cx="542" cy="548" r="18"/><text class="flowText" x="542" y="548">2</text>
+  <circle class="flow" cx="1018" cy="540" r="18"/><text class="flowText" x="1018" y="540">3</text>
+  <circle class="flow" cx="255" cy="463" r="18"/><text class="flowText" x="255" y="463">4</text>
+  <circle class="flow" cx="812" cy="742" r="18"/><text class="flowText" x="812" y="742">5</text>
+  <circle class="flow" cx="1082" cy="880" r="18"/><text class="flowText" x="1082" y="880">6</text>
+  <circle class="flow" cx="1175" cy="494" r="18"/><text class="flowText" x="1175" y="494">7</text>
+  <circle class="flow" cx="1370" cy="494" r="18"/><text class="flowText" x="1370" y="494">8</text>
+  <circle class="flow" cx="1285" cy="881" r="18"/><text class="flowText" x="1285" y="881">9</text>
+  <circle class="flow" cx="1366" cy="655" r="18"/><text class="flowText" x="1366" y="655">10</text>
+
+  <!-- Flow lines -->
+  <path class="line" d="M222,232 C285,232 310,590 360,590"/>
+  <path class="line" d="M222,344 C310,344 650,566 690,590"/>
+  <path class="lineBlue" d="M495,622 L520,622"/>
+  <path class="lineBlue" d="M655,622 L690,622"/>
+  <path class="line" d="M1020,625 L1090,545"/>
+  <path class="line" d="M1020,650 L1285,545"/>
+  <path class="lineDashed" d="M410,248 C520,360 690,455 760,550"/>
+  <path class="lineDashed" d="M410,324 C560,408 1010,462 1090,530"/>
+  <path class="line" d="M222,463 C380,463 560,610 690,620"/>
+  <path class="line" d="M855,700 L810,760"/>
+  <path class="line" d="M765,838 L455,905"/>
+  <path class="line" d="M812,838 L595,905"/>
+  <path class="line" d="M860,838 L775,905"/>
+  <path class="line" d="M960,800 C1050,815 1170,850 1205,905"/>
+  <path class="line" d="M960,820 C1120,830 1340,850 1385,905"/>
+  <path class="line" d="M1025,905 C1010,830 980,760 910,700"/>
+  <path class="line" d="M1370,654 L1370,675"/>
+  <path class="lineDashed" d="M222,591 C360,590 430,710 690,660"/>
+  <path class="lineDashed" d="M222,724 C520,760 1050,760 1285,625"/>
+
+  <!-- Legend and flow notes -->
+  <rect class="external" x="565" y="110" width="990" height="250" rx="8"/>
+  <text class="label" x="590" y="140">Numbered Flow</text>
+  <text class="tiny" x="590" y="168">1. Users access Horizon UI through client DNS, TLS, and ALB ingress.</text>
+  <text class="tiny" x="590" y="188">2. Frontend calls backend API; backend resolves Environment Catalog and validates license.</text>
+  <text class="tiny" x="590" y="208">3. Backend triggers Jenkins only after preflight passes.</text>
+  <text class="tiny" x="590" y="228">4. Jenkins clones client source from the client-approved Git provider inside client AWS.</text>
+  <text class="tiny" x="590" y="248">5. Jenkins uses IRSA and STS to assume the selected environment deploy role.</text>
+  <text class="tiny" x="590" y="268">6. Deploy roles are namespace-scoped through EKS access entries/RBAC.</text>
+  <text class="tiny" x="590" y="288">7. Images are pulled from Horizon ECR and mirrored to client ECR; app images are pushed to client ECR.</text>
+  <text class="tiny" x="590" y="308">8. Build, test, scan, image metadata, and release evidence are written to client S3.</text>
+  <text class="tiny" x="590" y="328">9. Production pipeline promotes approved images/artifacts to prod account after approval.</text>
+  <text class="tiny" x="590" y="348">10. Logs, metrics, audit events, and encrypted secrets stay in the client AWS account.</text>
+
+  <rect class="service network" x="1150" y="128" width="18" height="18" rx="3"/><text class="tiny" x="1177" y="142">Networking / ingress</text>
+  <rect class="service compute" x="1150" y="158" width="18" height="18" rx="3"/><text class="tiny" x="1177" y="172">Compute / EKS runtime</text>
+  <rect class="service storage" x="1150" y="188" width="18" height="18" rx="3"/><text class="tiny" x="1177" y="202">Storage / artifact repositories</text>
+  <rect class="service security" x="1150" y="218" width="18" height="18" rx="3"/><text class="tiny" x="1177" y="232">Security / identity / secrets</text>
+  <rect class="service analytics" x="1150" y="248" width="18" height="18" rx="3"/><text class="tiny" x="1177" y="262">Observability / reporting</text>
+  <rect class="service devops" x="1150" y="278" width="18" height="18" rx="3"/><text class="tiny" x="1177" y="292">DevOps source and execution</text>
+
+  <text class="tiny" x="36" y="1045">Reference architecture: client source code, artifacts, secrets, logs, container images, and evidence remain inside the client boundary. Horizon Relevance receives only license sync metadata.</text>
+</svg>

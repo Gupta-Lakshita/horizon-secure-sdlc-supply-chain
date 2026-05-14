@@ -4,16 +4,17 @@
 
 1. [Purpose](#purpose)
 2. [Architecture Principles](#architecture-principles)
-3. [Techno-Functional View](#techno-functional-view)
-4. [Client-Hosted AWS Architecture](#client-hosted-aws-architecture)
-5. [AWS Services and Platform Components](#aws-services-and-platform-components)
-6. [Pipeline Process Model](#pipeline-process-model)
-7. [Environment and Account Segregation](#environment-and-account-segregation)
-8. [Identity, Roles, and Access Control](#identity-roles-and-access-control)
-9. [Data, Artifact, and Evidence Flow](#data-artifact-and-evidence-flow)
-10. [License and Image Distribution Model](#license-and-image-distribution-model)
-11. [Client Onboarding Flow](#client-onboarding-flow)
-12. [Operational Responsibilities](#operational-responsibilities)
+3. [AWS Reference Architecture Diagram](#aws-reference-architecture-diagram)
+4. [Techno-Functional View](#techno-functional-view)
+5. [Client-Hosted AWS Architecture](#client-hosted-aws-architecture)
+6. [AWS Services and Platform Components](#aws-services-and-platform-components)
+7. [Pipeline Process Model](#pipeline-process-model)
+8. [Environment and Account Segregation](#environment-and-account-segregation)
+9. [Identity, Roles, and Access Control](#identity-roles-and-access-control)
+10. [Data, Artifact, and Evidence Flow](#data-artifact-and-evidence-flow)
+11. [License and Image Distribution Model](#license-and-image-distribution-model)
+12. [Client Onboarding Flow](#client-onboarding-flow)
+13. [Operational Responsibilities](#operational-responsibilities)
 
 ## Purpose
 
@@ -39,6 +40,12 @@ The target client model is:
 | Namespace-scoped deployment | Deploy roles are mapped into EKS with access only to the target application namespace. |
 | White-labeled security findings | Dashboards show vulnerabilities, malicious patterns, policy violations, and remediation guidance without exposing internal scanner tooling. |
 | License-bound runtime | License is bound to client ID, installation ID, enabled features, allowed AWS accounts, and expiration. |
+
+## AWS Reference Architecture Diagram
+
+The following diagram is the client-facing AWS layout view. It shows the AWS account boundaries, VPC/platform boundary, named AWS services, Horizon product runtime components, enterprise systems, deployment environments, and numbered process flow.
+
+![Horizon Relevance Client Enterprise AWS Reference Architecture](assets/client-enterprise-aws-reference-architecture.svg)
 
 ## Techno-Functional View
 
