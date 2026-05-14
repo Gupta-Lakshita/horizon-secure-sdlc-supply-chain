@@ -217,9 +217,9 @@ Preferred enterprise approach is to pull from the private Horizon release regist
 aws ecr get-login-password --region us-east-1   | docker login --username AWS --password-stdin 426946630837.dkr.ecr.us-east-1.amazonaws.com
 
 # Example: mirror backend release from Horizon ECR into client ECR.
-docker pull 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.22
-docker tag 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.22   <client-account>.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.22
-docker push <client-account>.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.22
+docker pull 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.24
+docker tag 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.24   <client-account>.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.24
+docker push <client-account>.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.24
 ```
 
 Repeat for frontend, Jenkins, scanner images, and required utility images. For regulated clients, pin deployments by image digest in the approved release record.
@@ -698,4 +698,3 @@ Use this checklist before declaring onboarding complete.
 | Findings dashboard validated | Pending |
 | Reports visible in S3 | Pending |
 | Trial closeout date scheduled | Pending |
-

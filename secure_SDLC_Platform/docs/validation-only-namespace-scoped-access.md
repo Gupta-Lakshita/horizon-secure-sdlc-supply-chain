@@ -111,11 +111,11 @@ aws eks associate-access-policy \
   --cluster-name acme-qa-eks \
   --region us-east-1 \
   --principal-arn arn:aws:iam::111122223333:role/HorizonQaDeployRole \
-  --policy-arn arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy \
+  --policy-arn arn:aws:eks::aws:cluster-access-policy/AmazonEKSEditPolicy \
   --access-scope type=namespace,namespaces=acme-payments-qa
 ```
 
-For strict Kubernetes RBAC, bind only the required verbs in the namespace used by the application.
+`AmazonEKSEditPolicy` is the preferred managed policy for application deployments scoped to one namespace. Avoid `AmazonEKSClusterAdminPolicy` for deploy roles unless the role is a temporary platform bootstrap role. For strict Kubernetes RBAC, bind only the required verbs in the namespace used by the application.
 
 ## Jenkins IRSA Model
 

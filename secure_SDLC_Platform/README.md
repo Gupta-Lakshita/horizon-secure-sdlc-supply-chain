@@ -21,6 +21,7 @@ The product code remains in the existing backend, frontend, and Jenkins shared-l
 - `scripts/install.sh`: runs infrastructure and/or platform installation phases.
 - `scripts/validate.sh`: validates the installed namespace, enterprise config, license defaults, and pods.
 - `docs/client-values-reference.md`: YAML structure reference for Environment Catalog, generic LDAP/AD role mapping, and product image settings.
+- `docs/aws-iam-eks-prerequisites.md`: client AWS IAM, Jenkins IRSA, deploy-role, EKS access-entry, and namespace-scoped prerequisites.
 - `docs/validation-only-namespace-scoped-access.md`: enterprise paid-client access model for validation-only IAM, Jenkins IRSA, and namespace-scoped EKS deployment.
 - `docs/client-hosted-test-plan.md`: end-to-end validation flow for a simulated client.
 - `docs/license-contract.md`: first backend/Jenkins license contract.
@@ -50,7 +51,7 @@ Validate:
 bash secure_SDLC_Platform/scripts/validate.sh -f regeneron-trial.local.yaml
 ```
 
-See `docs/installer-runbook.md` for the full installation guide, `docs/client-values-reference.md` for the current YAML structure, and `docs/validation-only-namespace-scoped-access.md` for the enterprise access model.
+See `docs/installer-runbook.md` for the full installation guide, `docs/client-values-reference.md` for the current YAML structure, `docs/aws-iam-eks-prerequisites.md` for client AWS prerequisites, and `docs/validation-only-namespace-scoped-access.md` for the enterprise access model.
 
 ## Current Hardened Product Image Contract
 
@@ -58,8 +59,8 @@ Trial and enterprise installs should use Horizon private ECR image references, n
 
 | Component | Private ECR image |
 | --- | --- |
-| Frontend | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/frontend:1.4.19` |
-| Backend | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.22` |
+| Frontend | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/frontend:1.4.20` |
+| Backend | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.24` |
 | Jenkins | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/jenkins:1.0.8` |
 | SonarQube mirror | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/sonarqube:10.4-community` |
 | Container/IaC scanner | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/trivy-scanner:1.1.2` |
