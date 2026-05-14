@@ -31,6 +31,7 @@ installer: {}
 client: {}
 domain: {}
 aws: {}
+accessModel: {}
 environmentCatalog: {}
 license: {}
 identity: {}
@@ -44,6 +45,7 @@ existingInfrastructure: {}
 | `client` | Client/Horizon onboarding | Defines client ID, display name, industry, and data boundary. |
 | `domain` | Client DNS/platform team | Defines frontend, backend, Jenkins, Keycloak, and SonarQube hosts. |
 | `aws` | Client cloud team | Keeps bootstrap account mappings for Terraform and preflight compatibility. |
+| `accessModel` | Client cloud/platform team | Selects validation-only IAM, namespace-scoped EKS access, and Jenkins IRSA runtime role. |
 | `environmentCatalog` | Platform admin | The runtime source of truth for DEV/QA/STAGE/PROD deployment settings. |
 | `license` | Horizon issues, client installs | Controls trial/paid/enterprise entitlements. |
 | `identity` | Client IAM/IdP team | Configures OIDC/SAML/LDAP mode and group-to-role mappings. |
@@ -51,6 +53,22 @@ existingInfrastructure: {}
 | `existingInfrastructure` | Client platform team | Declares which platform dependencies already exist. |
 
 ## Environment Catalog
+
+Enterprise paid clients should use validation-only IAM and namespace-scoped EKS access:
+
+```yaml
+accessModel:
+  iamMode: validation-only
+  eksAccessMode: namespace-scoped
+  jenkins:
+    createServiceAccount: true
+    serviceAccountName: jenkins
+    serviceAccountNamespace: horizon-platform
+    irsaRoleArn: arn:aws:iam::111122223333:role/HorizonJenkinsRuntimeRole
+  validation:
+    backendPreflightEnforced: true
+    installerValidatesRoles: true
+```
 
 The Environment Catalog replaces user-entered cloud fields in day-to-day pipeline requests. An admin configures it once during onboarding, either through this YAML file or through the admin UI after installation. Developers only select a Target Environment such as `DEV`, `QA`, `STAGE`, or `PROD`.
 
@@ -72,6 +90,8 @@ environmentCatalog:
       clusterName: acme-qa-eks
       namespaceStrategy: per-app
       namespaceTemplate: ${clientId}-${projectName}-qa
+      iamValidationMode: validation-only
+      eksAccessMode: namespace-scoped
       snsTopicArn: arn:aws:sns:us-east-1:111122223333:acme-devsecops-notifications
       isActive: true
 ```
@@ -95,6 +115,8 @@ Field guidance:
 | `clusterName` | Yes | EKS cluster selected by environment. |
 | `namespaceStrategy` | Yes | `per-app`, `fixed`, or `manual`. |
 | `namespaceTemplate` | Recommended | Supports multi-tenant clusters with app-specific namespaces. |
+| `iamValidationMode` | Enterprise paid | Use `validation-only`; client creates IAM roles and installer/backend validate them. |
+| `eksAccessMode` | Enterprise paid | Use `namespace-scoped`; deployment roles are mapped only to approved app namespaces. |
 | `snsTopicArn` | Optional | Used when notifications are enabled. |
 | `requiresApproval` | Prod recommended | Blocks automated prod promotion until approval is captured. |
 | `isActive` | Yes | Hide inactive environments from developer forms. |

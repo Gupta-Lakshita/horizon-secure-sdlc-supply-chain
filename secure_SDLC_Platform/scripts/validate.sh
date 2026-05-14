@@ -41,6 +41,8 @@ kubectl get namespace "${NAMESPACE}" >/dev/null
 
 echo "Checking installer config..."
 kubectl get configmap horizon-enterprise-config -n "${NAMESPACE}" >/dev/null
+kubectl get configmap horizon-enterprise-config -n "${NAMESPACE}" -o jsonpath='{.data.BACKEND_PREFLIGHT_ENFORCED}' | grep -q "true" \
+  || { echo "Backend preflight enforcement is not enabled in installer config"; exit 1; }
 
 echo "Checking license defaults..."
 kubectl get secret horizon-enterprise-license-defaults -n "${NAMESPACE}" >/dev/null
@@ -48,5 +50,9 @@ kubectl get secret horizon-enterprise-license-defaults -n "${NAMESPACE}" >/dev/n
 echo "Checking platform pods..."
 kubectl get pods -n "${NAMESPACE}"
 
-echo "Validation completed. Next validate application-level URLs, identity login, license status, ECR push, S3 artifact upload, and a sample pipeline trigger."
+if [[ -n "${BACKEND_URL:-}" ]]; then
+  echo "Checking backend Environment Catalog preflight endpoint..."
+  curl -fsS "${BACKEND_URL%/}/environment-catalog/preflight/DEV?project_name=sample-application&pipeline_kind=DEVOPS" >/dev/null
+fi
 
+echo "Validation completed. Next validate application-level URLs, identity login, license status, ECR push, S3 artifact upload, and a sample pipeline trigger."

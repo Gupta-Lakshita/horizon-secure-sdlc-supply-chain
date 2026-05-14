@@ -21,6 +21,7 @@ The product code remains in the existing backend, frontend, and Jenkins shared-l
 - `scripts/install.sh`: runs infrastructure and/or platform installation phases.
 - `scripts/validate.sh`: validates the installed namespace, enterprise config, license defaults, and pods.
 - `docs/client-values-reference.md`: YAML structure reference for Environment Catalog, generic LDAP/AD role mapping, and product image settings.
+- `docs/validation-only-namespace-scoped-access.md`: enterprise paid-client access model for validation-only IAM, Jenkins IRSA, and namespace-scoped EKS deployment.
 - `docs/client-hosted-test-plan.md`: end-to-end validation flow for a simulated client.
 - `docs/license-contract.md`: first backend/Jenkins license contract.
 - `docs/client-onboarding-trial-paid-enterprise-playbook.md`: product-owner onboarding, licensing, infrastructure, and commercialization playbook for trial, paid, and enterprise clients.
@@ -49,7 +50,7 @@ Validate:
 bash secure_SDLC_Platform/scripts/validate.sh -f regeneron-trial.local.yaml
 ```
 
-See `docs/installer-runbook.md` for the full installation guide and `docs/client-values-reference.md` for the current YAML structure.
+See `docs/installer-runbook.md` for the full installation guide, `docs/client-values-reference.md` for the current YAML structure, and `docs/validation-only-namespace-scoped-access.md` for the enterprise access model.
 
 ## Current Hardened Product Image Contract
 

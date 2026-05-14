@@ -62,6 +62,18 @@ aws:
   notifications:
     snsTopicArn: arn:aws:sns:us-east-1:111111111111:regeneron-devsecops-notifications
 
+accessModel:
+  iamMode: validation-only
+  eksAccessMode: namespace-scoped
+  jenkins:
+    createServiceAccount: true
+    serviceAccountName: jenkins
+    serviceAccountNamespace: horizon-platform
+    irsaRoleArn: arn:aws:iam::111111111111:role/HorizonJenkinsRuntimeRole
+  validation:
+    backendPreflightEnforced: true
+    installerValidatesRoles: true
+
 # Admin-owned catalog. The installer seeds this into the platform namespace.
 # The backend serves it to the UI and resolves AWS/EKS/S3/ECR values before triggering Jenkins.
 # Developers should only select Target Environment; they should not type AWS account IDs, role ARNs,
@@ -81,6 +93,8 @@ environmentCatalog:
       clusterName: regeneron-dev-eks
       namespaceStrategy: per-app
       namespaceTemplate: ${clientId}-${projectName}-dev
+      iamValidationMode: validation-only
+      eksAccessMode: namespace-scoped
       snsTopicArn: arn:aws:sns:us-east-1:111111111111:regeneron-devsecops-notifications
       isActive: true
     - name: QA
@@ -96,6 +110,8 @@ environmentCatalog:
       clusterName: regeneron-qa-eks
       namespaceStrategy: per-app
       namespaceTemplate: ${clientId}-${projectName}-qa
+      iamValidationMode: validation-only
+      eksAccessMode: namespace-scoped
       snsTopicArn: arn:aws:sns:us-east-1:111111111111:regeneron-devsecops-notifications
       isActive: true
     - name: STAGE
@@ -111,6 +127,8 @@ environmentCatalog:
       clusterName: regeneron-stage-eks
       namespaceStrategy: per-app
       namespaceTemplate: ${clientId}-${projectName}-stage
+      iamValidationMode: validation-only
+      eksAccessMode: namespace-scoped
       snsTopicArn: arn:aws:sns:us-east-1:111111111111:regeneron-devsecops-notifications
       isActive: true
     - name: PROD
@@ -126,6 +144,8 @@ environmentCatalog:
       clusterName: regeneron-prod-eks
       namespaceStrategy: per-app
       namespaceTemplate: ${clientId}-${projectName}-prod
+      iamValidationMode: validation-only
+      eksAccessMode: namespace-scoped
       snsTopicArn: arn:aws:sns:us-east-1:333333333333:regeneron-devsecops-prod-notifications
       requiresApproval: true
       isActive: true

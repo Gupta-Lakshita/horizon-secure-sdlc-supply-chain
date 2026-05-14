@@ -12,6 +12,12 @@ data:
   CLIENT_INDUSTRY: {{ .Values.client.industry | quote }}
   AWS_REGION: {{ .Values.aws.region | quote }}
   ARTIFACT_BUCKET: {{ .Values.aws.artifactBucket | quote }}
+  IAM_MODE: {{ .Values.accessModel.iamMode | default "validation-only" | quote }}
+  EKS_ACCESS_MODE: {{ .Values.accessModel.eksAccessMode | default "namespace-scoped" | quote }}
+  JENKINS_SERVICE_ACCOUNT_NAME: {{ .Values.accessModel.jenkins.serviceAccountName | default "jenkins" | quote }}
+  JENKINS_SERVICE_ACCOUNT_NAMESPACE: {{ .Values.accessModel.jenkins.serviceAccountNamespace | default .Values.installer.namespace | quote }}
+  JENKINS_IRSA_ROLE_ARN: {{ .Values.accessModel.jenkins.irsaRoleArn | default "" | quote }}
+  BACKEND_PREFLIGHT_ENFORCED: {{ .Values.accessModel.validation.backendPreflightEnforced | default true | quote }}
   ENVIRONMENT_CATALOG_JSON: {{ toJson .Values.environmentCatalog.environments | quote }}
   DEV_ACCOUNT_ID: {{ .Values.aws.accounts.dev.accountId | quote }}
   DEV_ROLE_ARN: {{ .Values.aws.accounts.dev.roleArn | quote }}
