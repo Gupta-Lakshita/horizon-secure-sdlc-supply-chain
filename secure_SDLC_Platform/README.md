@@ -20,6 +20,7 @@ The product code remains in the existing backend, frontend, and Jenkins shared-l
 - `scripts/preflight.sh`: validates local tools, AWS access, values, and BYO cluster access.
 - `scripts/install.sh`: runs infrastructure and/or platform installation phases.
 - `scripts/validate.sh`: validates the installed namespace, enterprise config, license defaults, and pods.
+- `docs/client-enterprise-architecture.md`: conceptual techno-functional architecture for client-hosted enterprise deployments.
 - `docs/client-values-reference.md`: YAML structure reference for Environment Catalog, generic LDAP/AD role mapping, and product image settings.
 - `docs/aws-iam-eks-prerequisites.md`: client AWS IAM, Jenkins IRSA, deploy-role, EKS access-entry, and namespace-scoped prerequisites.
 - `docs/validation-only-namespace-scoped-access.md`: enterprise paid-client access model for validation-only IAM, Jenkins IRSA, and namespace-scoped EKS deployment.
@@ -51,7 +52,7 @@ Validate:
 bash secure_SDLC_Platform/scripts/validate.sh -f regeneron-trial.local.yaml
 ```
 
-See `docs/installer-runbook.md` for the full installation guide, `docs/client-values-reference.md` for the current YAML structure, `docs/aws-iam-eks-prerequisites.md` for client AWS prerequisites, and `docs/validation-only-namespace-scoped-access.md` for the enterprise access model.
+See `docs/client-enterprise-architecture.md` for the conceptual architecture, `docs/installer-runbook.md` for the full installation guide, `docs/client-values-reference.md` for the current YAML structure, `docs/aws-iam-eks-prerequisites.md` for client AWS prerequisites, and `docs/validation-only-namespace-scoped-access.md` for the enterprise access model.
 
 ## Current Hardened Product Image Contract
 
