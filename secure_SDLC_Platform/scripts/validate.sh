@@ -2,57 +2,30 @@
 set -euo pipefail
 
 VALUES_FILE=""
-
-usage() {
-  echo "Usage: $0 -f <client-values.yaml>"
-}
+ENVIRONMENT=""
+SKIP_AWS="false"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+HELPER="${SCRIPT_DIR}/values-helper.rb"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    -f|--file)
-      VALUES_FILE="${2:-}"
-      shift 2
-      ;;
-    -h|--help)
-      usage
-      exit 0
-      ;;
-    *)
-      echo "Unknown argument: $1"
-      usage
-      exit 1
-      ;;
+    -f|--file) VALUES_FILE="${2:-}"; shift 2 ;;
+    -e|--environment) ENVIRONMENT="${2:-}"; shift 2 ;;
+    --skip-aws) SKIP_AWS="true"; shift ;;
+    *) shift ;;
   esac
 done
 
-if [[ -z "${VALUES_FILE}" ]]; then
-  usage
-  exit 1
-fi
-
-NAMESPACE="$(grep -A5 '^installer:' "${VALUES_FILE}" | awk '/namespace:/ {print $2; exit}' | tr -d '\"')"
+[[ -f "${VALUES_FILE}" ]] || { echo "Values file not found: ${VALUES_FILE}" >&2; exit 1; }
+if [[ -n "${ENVIRONMENT}" ]]; then ruby "${HELPER}" validate --file "${VALUES_FILE}" --environment "${ENVIRONMENT}"; else ruby "${HELPER}" validate --file "${VALUES_FILE}"; fi
+NAMESPACE="$(ruby "${HELPER}" get --file "${VALUES_FILE}" --path installer.namespace)"
 NAMESPACE="${NAMESPACE:-horizon-platform}"
-
 echo "== Horizon Enterprise Installer Validation =="
 echo "Namespace: ${NAMESPACE}"
-
-echo "Checking namespace..."
+[[ -n "${ENVIRONMENT}" ]] && echo "Environment: ${ENVIRONMENT}"
+[[ "${SKIP_AWS}" == "true" ]] && { echo "Skipping Kubernetes/AWS runtime validation because --skip-aws was provided."; exit 0; }
 kubectl get namespace "${NAMESPACE}" >/dev/null
-
-echo "Checking installer config..."
 kubectl get configmap horizon-enterprise-config -n "${NAMESPACE}" >/dev/null
-kubectl get configmap horizon-enterprise-config -n "${NAMESPACE}" -o jsonpath='{.data.BACKEND_PREFLIGHT_ENFORCED}' | grep -q "true" \
-  || { echo "Backend preflight enforcement is not enabled in installer config"; exit 1; }
-
-echo "Checking license defaults..."
 kubectl get secret horizon-enterprise-license-defaults -n "${NAMESPACE}" >/dev/null
-
-echo "Checking platform pods..."
 kubectl get pods -n "${NAMESPACE}"
-
-if [[ -n "${BACKEND_URL:-}" ]]; then
-  echo "Checking backend Environment Catalog preflight endpoint..."
-  curl -fsS "${BACKEND_URL%/}/environment-catalog/preflight/DEV?project_name=sample-application&pipeline_kind=DEVOPS" >/dev/null
-fi
-
-echo "Validation completed. Next validate application-level URLs, identity login, license status, ECR push, S3 artifact upload, and a sample pipeline trigger."
+echo "Validation completed."

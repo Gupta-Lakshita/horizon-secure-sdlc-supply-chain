@@ -1,56 +1,95 @@
+{{- $values := .Values -}}
+{{- $platform := default dict $values.platform -}}
+{{- $platformCluster := default dict $platform.cluster -}}
+{{- $shared := default dict $values.sharedServices -}}
+{{- $sharedArtifact := default dict $shared.artifactBucket -}}
+{{- $sharedEcr := default dict $shared.applicationEcr -}}
+{{- $domain := default dict $values.domain -}}
+{{- $platformHosts := default dict $domain.platformHosts -}}
+{{- $legacyAws := default dict $values.aws -}}
+{{- $accessModel := default dict $values.accessModel -}}
+{{- $jenkinsAccess := default dict $accessModel.jenkins -}}
+{{- $jenkinsRuntimeRole := default dict $jenkinsAccess.runtimeRole -}}
+{{- $backendAccess := default dict $accessModel.backend -}}
+{{- $backendValidationRole := default dict $backendAccess.validationRole -}}
+{{- $accessValidation := default dict $accessModel.validation -}}
+{{- $existingInfrastructure := default dict $values.existingInfrastructure -}}
+{{- $identity := default dict $values.identity -}}
+{{- $ldap := default dict $identity.ldap -}}
+{{- $environmentCatalog := list -}}
+{{- if eq (default "" $values.environmentCatalog.source) "generated-from-environments" -}}
+{{- range $env := default list $values.environments -}}
+{{- if ne (toString (default true $env.enabled)) "false" -}}
+{{- $foundation := default dict $env.foundation -}}
+{{- $appEcr := default dict $foundation.applicationEcr -}}
+{{- $artifact := default dict $foundation.artifactBucket -}}
+{{- $iam := default dict $env.iam -}}
+{{- $deployRole := default dict $iam.deployRole -}}
+{{- $sourceRole := default dict $iam.sourceRole -}}
+{{- $targetRole := default dict $iam.targetRole -}}
+{{- $eks := default dict $env.eks -}}
+{{- $namespace := default dict $eks.namespace -}}
+{{- $runtime := default dict $env.runtime -}}
+{{- $aws := default dict $env.aws -}}
+{{- $environmentCatalog = append $environmentCatalog (dict
+  "name" $env.name
+  "displayName" (default $env.name $env.displayName)
+  "accountTier" (default "nonprod" $env.accountTier)
+  "awsAccountId" $aws.accountId
+  "awsRegion" $aws.region
+  "ecrRegistry" $appEcr.registry
+  "ecrRepositoryTemplate" (default $appEcr.repositoryName $appEcr.repositoryTemplate)
+  "artifactBucket" $artifact.name
+  "clientAwsRoleArn" $deployRole.roleArn
+  "nonprodAwsRoleArn" $deployRole.roleArn
+  "sourceAwsRoleArn" $sourceRole.roleArn
+  "targetAwsRoleArn" $targetRole.roleArn
+  "clusterName" $eks.clusterName
+  "namespaceStrategy" (default "per-app" $namespace.strategy)
+  "namespaceTemplate" $namespace.template
+  "iamValidationMode" (default (default "validation-only" $values.accessModel.iamMode) $iam.mode)
+  "eksAccessMode" (default "namespace-scoped" $values.accessModel.eksAccessMode)
+  "isActive" (default true $runtime.isDeployable)
+  "requiresApproval" (default false $runtime.requiresApproval)
+) -}}
+{{- end -}}
+{{- end -}}
+{{- else -}}
+{{- $environmentCatalog = default list $values.environmentCatalog.environments -}}
+{{- end -}}
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: horizon-enterprise-config
-  namespace: {{ .Values.installer.namespace | quote }}
+  namespace: {{ .Release.Namespace }}
   labels:
     app.kubernetes.io/name: horizon-platform
-    app.kubernetes.io/component: enterprise-config
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
 data:
-  CLIENT_ID: {{ .Values.client.id | quote }}
-  CLIENT_NAME: {{ .Values.client.name | quote }}
-  CLIENT_INDUSTRY: {{ .Values.client.industry | quote }}
-  AWS_REGION: {{ .Values.aws.region | quote }}
-  ARTIFACT_BUCKET: {{ .Values.aws.artifactBucket | quote }}
-  IAM_MODE: {{ .Values.accessModel.iamMode | default "validation-only" | quote }}
-  EKS_ACCESS_MODE: {{ .Values.accessModel.eksAccessMode | default "namespace-scoped" | quote }}
-  JENKINS_SERVICE_ACCOUNT_NAME: {{ .Values.accessModel.jenkins.serviceAccountName | default "jenkins" | quote }}
-  JENKINS_SERVICE_ACCOUNT_NAMESPACE: {{ .Values.accessModel.jenkins.serviceAccountNamespace | default .Values.installer.namespace | quote }}
-  JENKINS_IRSA_ROLE_ARN: {{ .Values.accessModel.jenkins.irsaRoleArn | default "" | quote }}
-  BACKEND_PREFLIGHT_ENFORCED: {{ .Values.accessModel.validation.backendPreflightEnforced | default true | quote }}
-  ENVIRONMENT_CATALOG_JSON: {{ toJson .Values.environmentCatalog.environments | quote }}
-  DEV_ACCOUNT_ID: {{ .Values.aws.accounts.dev.accountId | quote }}
-  DEV_ROLE_ARN: {{ .Values.aws.accounts.dev.roleArn | quote }}
-  DEV_CLUSTER_NAME: {{ .Values.aws.accounts.dev.clusterName | quote }}
-  DEV_NAMESPACE: {{ .Values.aws.accounts.dev.namespace | quote }}
-  QA_ACCOUNT_ID: {{ .Values.aws.accounts.qa.accountId | quote }}
-  QA_ROLE_ARN: {{ .Values.aws.accounts.qa.roleArn | quote }}
-  QA_CLUSTER_NAME: {{ .Values.aws.accounts.qa.clusterName | quote }}
-  QA_NAMESPACE: {{ .Values.aws.accounts.qa.namespace | quote }}
-  STAGE_ACCOUNT_ID: {{ .Values.aws.accounts.stage.accountId | quote }}
-  STAGE_ROLE_ARN: {{ .Values.aws.accounts.stage.roleArn | quote }}
-  STAGE_CLUSTER_NAME: {{ .Values.aws.accounts.stage.clusterName | quote }}
-  STAGE_NAMESPACE: {{ .Values.aws.accounts.stage.namespace | quote }}
-  PROD_ACCOUNT_ID: {{ .Values.aws.accounts.prod.accountId | quote }}
-  PROD_SOURCE_ROLE_ARN: {{ .Values.aws.accounts.prod.sourceRoleArn | quote }}
-  PROD_TARGET_ROLE_ARN: {{ .Values.aws.accounts.prod.targetRoleArn | quote }}
-  PROD_CLUSTER_NAME: {{ .Values.aws.accounts.prod.clusterName | quote }}
-  PROD_NAMESPACE: {{ .Values.aws.accounts.prod.namespace | quote }}
-  LICENSE_MODE: {{ .Values.license.mode | quote }}
-  LICENSE_SYNC_ENDPOINT: {{ .Values.license.syncEndpoint | quote }}
-  LICENSE_CLIENT_ID: {{ .Values.license.clientId | quote }}
-  LICENSE_INSTALLATION_ID: {{ .Values.license.installationId | quote }}
-  LICENSE_ALLOWED_AWS_ACCOUNT_IDS: {{ join "," .Values.license.allowedAwsAccountIds | quote }}
-  LICENSE_RENEWAL_CHECK_HOURS: {{ .Values.license.renewalCheckHours | quote }}
-  IDENTITY_MODE: {{ .Values.identity.mode | quote }}
-  HORIZON_PRODUCT_REGISTRY: {{ .Values.aws.ecr.horizonRegistry | default "" | quote }}
-  LDAP_ENABLED: {{ .Values.identity.ldap.enabled | quote }}
-  LDAP_HOST: {{ .Values.identity.ldap.host | quote }}
-  LDAP_BASE_DN: {{ .Values.identity.ldap.baseDn | quote }}
-  LDAP_USER_BASE_DN: {{ .Values.identity.ldap.userBaseDn | quote }}
-  LDAP_GROUP_BASE_DN: {{ .Values.identity.ldap.groupBaseDn | quote }}
-  LDAP_GROUP_SEARCH_FILTER: {{ .Values.identity.ldap.groupSearchFilter | quote }}
-  LDAP_GROUP_MEMBER_ATTRIBUTE: {{ .Values.identity.ldap.groupMemberAttribute | quote }}
-  LDAP_GROUP_NAME_ATTRIBUTE: {{ .Values.identity.ldap.groupNameAttribute | quote }}
-  LDAP_USER_GROUP_ATTRIBUTE: {{ .Values.identity.ldap.userGroupAttribute | quote }}
-  LDAP_ROLE_GROUP_MAPPINGS: {{ toJson .Values.identity.ldap.roleGroupMappings | quote }}
+  CLIENT_ID: {{ default "" $values.client.id | quote }}
+  CLIENT_NAME: {{ default "" $values.client.name | quote }}
+  CLIENT_INDUSTRY: {{ default "" $values.client.industry | quote }}
+  DATA_BOUNDARY: {{ default "client-hosted" $values.client.dataBoundary | quote }}
+  PLATFORM_NAMESPACE: {{ default .Release.Namespace $values.installer.namespace | quote }}
+  AWS_REGION: {{ default (default "us-east-1" $legacyAws.region) $platform.region | quote }}
+  PLATFORM_CLUSTER_NAME: {{ default "" $platformCluster.name | quote }}
+  PLATFORM_INGRESS_CLASS_NAME: {{ default (default "nginx" $existingInfrastructure.ingressClassName) $platformCluster.ingressClassName | quote }}
+  PLATFORM_STORAGE_CLASS_NAME: {{ default (default "gp3" $existingInfrastructure.storageClassName) $platformCluster.storageClassName | quote }}
+  DOMAIN_BASE: {{ default "" $domain.baseDomain | quote }}
+  FRONTEND_HOST: {{ default (default "" $domain.frontendHost) $platformHosts.frontendHost | quote }}
+  BACKEND_PATH: {{ default (default "/pipeline/api" $domain.backendPath) $platformHosts.backendPath | quote }}
+  JENKINS_HOST: {{ default (default "" $domain.jenkinsHost) $platformHosts.jenkinsHost | quote }}
+  JENKINS_PATH: {{ default "/jenkins" $platformHosts.jenkinsPath | quote }}
+  SONARQUBE_HOST: {{ default (default "" $domain.sonarqubeHost) $platformHosts.sonarqubeHost | quote }}
+  JENKINS_RUNTIME_ROLE_ARN: {{ default (default "" $jenkinsAccess.irsaRoleArn) $jenkinsRuntimeRole.roleArn | quote }}
+  BACKEND_VALIDATION_ROLE_ARN: {{ default "" $backendValidationRole.roleArn | quote }}
+  IAM_MODE: {{ default "validation-only" $accessModel.iamMode | quote }}
+  EKS_ACCESS_MODE: {{ default "namespace-scoped" $accessModel.eksAccessMode | quote }}
+  BACKEND_PREFLIGHT_ENFORCED: {{ default true $accessValidation.backendPreflightEnforced | quote }}
+  INSTALLER_VALIDATES_ROLES: {{ default true $accessValidation.installerValidatesRoles | quote }}
+  ARTIFACT_BUCKET: {{ default (default "" $legacyAws.artifactBucket) $sharedArtifact.name | quote }}
+  APPLICATION_ECR_REGISTRY: {{ default "" $sharedEcr.registry | quote }}
+  APPLICATION_ECR_REPOSITORY: {{ default "" $sharedEcr.repositoryName | quote }}
+  ENVIRONMENT_CATALOG_JSON: {{ dict "environments" $environmentCatalog | toJson | quote }}
+  LDAP_ROLE_GROUP_MAPPINGS_JSON: {{ default dict $ldap.roleGroupMappings | toJson | quote }}

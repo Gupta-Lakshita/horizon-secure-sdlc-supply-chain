@@ -12,20 +12,24 @@
 8. [Preflight Validation](#preflight-validation)
 9. [Mode 1: Full Platform Provisioning](#mode-1-full-platform-provisioning)
 10. [Mode 2: Bring Your Own Infrastructure](#mode-2-bring-your-own-infrastructure)
-11. [Online License Sync](#online-license-sync)
-12. [Identity Configuration](#identity-configuration)
-13. [Validation](#validation)
-14. [Upgrade and Renewal](#upgrade-and-renewal)
-15. [Troubleshooting](#troubleshooting)
+11. [Mode 3: Hybrid Desired-State Provisioning](#mode-3-hybrid-desired-state-provisioning)
+12. [Terraform Remote State](#terraform-remote-state)
+13. [Destroy Workflow](#destroy-workflow)
+14. [Online License Sync](#online-license-sync)
+15. [Identity Configuration](#identity-configuration)
+16. [Validation](#validation)
+17. [Upgrade and Renewal](#upgrade-and-renewal)
+18. [Troubleshooting](#troubleshooting)
 
 ## Purpose
 
 The Horizon Relevance Enterprise Installer is the client-hosted packaging layer for the Horizon Relevance AI DevSecOps Platform. It gives enterprise clients a repeatable way to install the product into their AWS accounts without sending source code, artifacts, credentials, or regulated data to Horizon Relevance-managed infrastructure.
 
-The installer supports two installation modes:
+The installer supports three practical installation modes:
 
 1. **Full Platform Provisioning**: Horizon provisions the required AWS and Kubernetes foundation for the client.
 2. **Bring Your Own Infrastructure**: Horizon maps the product to existing client EKS, ECR, S3, IAM, DNS, and identity services.
+3. **Hybrid Desired-State Provisioning**: Horizon validates existing client resources and provisions only selected missing environment resources.
 
 ## Installer Modes
 
@@ -33,8 +37,9 @@ The installer supports two installation modes:
 | --- | --- | --- |
 | `full-provision` | Client has AWS accounts and DNS but no platform foundation. | Creates or configures VPC, EKS, ECR, S3, IAM roles, storage, ingress, platform namespace, and product components. |
 | `byo-infra` | Client already has EKS, ECR, S3, DNS, IAM, identity, or security tooling. | Validates and maps existing infrastructure, then installs Horizon product components only. |
+| `hybrid` | Client has some shared services, but selected environments are missing services such as QA/STAGE EKS. | Validates existing resources and provisions only resources marked `state=provision` in the selected environment. |
 
-The same `client-values.yaml` contract drives both modes.
+The same `client-values.yaml` contract drives all modes.
 
 ## Recommended Repository Ownership
 
@@ -113,6 +118,8 @@ helm version
 terraform version
 ```
 
+Terraform `>= 1.3.9` is required for the installer Terraform roots. The current Terraform path is pinned for Terraform 1.3.9 compatibility: AWS provider `~> 4.57.0`, VPC module `4.0.0`, and EKS module `19.21.0`. Namespace creation, EKS access entries, and ingress-nginx installation are handled through AWS CLI, `kubectl`, and Helm `local-exec` hooks so the environment root avoids a Kubernetes provider cycle during validation and planning.
+
 AWS permissions:
 
 1. Ability to call `sts:GetCallerIdentity`.
@@ -137,6 +144,12 @@ Copy one of the examples:
 cp secure_SDLC_Platform/examples/client-values.yaml client-values.local.yaml
 ```
 
+For a generic enterprise hybrid onboarding:
+
+```bash
+cp secure_SDLC_Platform/examples/client-hybrid-onboarding-values.yaml client-values.local.yaml
+```
+
 For a Regeneron-style trial:
 
 ```bash
@@ -153,8 +166,8 @@ The Environment Catalog is the runtime source of truth for DEV, QA, STAGE, and P
 
 Expected flow:
 
-1. Client platform/admin team fills `environmentCatalog.environments` in `client-values.yaml`.
-2. Installer writes the catalog into the platform config.
+1. Client platform/admin team fills `environments` in `client-values.yaml`; in legacy/BYO mode they may fill `environmentCatalog.environments` directly.
+2. Installer writes or generates the runtime catalog into the platform config.
 3. Backend serves active environments to the UI.
 4. Developer selects only `Target Environment`.
 5. Backend resolves ECR, S3, IAM role, EKS cluster, namespace strategy, and notification values before triggering Jenkins.
@@ -188,7 +201,7 @@ identity:
 Run preflight before provisioning or installing:
 
 ```bash
-bash secure_SDLC_Platform/scripts/preflight.sh -f regeneron-trial.local.yaml
+bash secure_SDLC_Platform/scripts/preflight.sh -f client-values.local.yaml --environment QA --dry-run --skip-aws
 ```
 
 Preflight checks:
@@ -257,6 +270,127 @@ bash secure_SDLC_Platform/scripts/preflight.sh -f client-values.local.yaml
 ```bash
 bash secure_SDLC_Platform/scripts/install.sh --phase platform -f client-values.local.yaml
 ```
+
+## Mode 3: Hybrid Desired-State Provisioning
+
+Use this when the client has a mixed estate, for example:
+
+1. AWS accounts and DNS exist, but EKS/S3/ECR/IAM are missing.
+2. S3 and ECR exist, but QA and STAGE clusters are missing.
+3. DEV already exists, but QA/STAGE namespaces and EKS access entries need to be created.
+
+Copy the generic desired-state file:
+
+```bash
+cp secure_SDLC_Platform/examples/client-hybrid-onboarding-values.yaml client-values.local.yaml
+```
+
+Each resource declares its lifecycle:
+
+| State | Installer Behavior |
+| --- | --- |
+| `existing` | Validate only. Do not create or delete. |
+| `provision` | Create/configure through Terraform or Helm. |
+| `disabled` | Ignore. |
+
+Each resource also declares a deletion policy:
+
+| Deletion Policy | Installer Behavior |
+| --- | --- |
+| `retain` | Never destroy through the installer. |
+| `delete` | May be destroyed only when the resource is provisioned and tracked in that environment Terraform state. |
+
+Dry-run QA:
+
+```bash
+bash secure_SDLC_Platform/scripts/preflight.sh \
+  -f client-values.local.yaml \
+  --environment QA \
+  --dry-run \
+  --skip-aws
+
+bash secure_SDLC_Platform/scripts/install.sh \
+  --phase infra \
+  -f client-values.local.yaml \
+  --environment QA \
+  --dry-run
+```
+
+Apply QA after client approval:
+
+```bash
+bash secure_SDLC_Platform/scripts/install.sh \
+  --phase infra \
+  -f client-values.local.yaml \
+  --environment QA \
+  --auto-approve
+```
+
+## Terraform Remote State
+
+Terraform state must remain inside the client boundary. The hybrid values file uses one client-owned S3 state bucket and one DynamoDB lock table, with separate keys per environment:
+
+```text
+horizon-installer/platform/terraform.tfstate
+horizon-installer/dev/terraform.tfstate
+horizon-installer/qa/terraform.tfstate
+horizon-installer/stage/terraform.tfstate
+horizon-installer/prod/terraform.tfstate
+```
+
+If the client already has a state backend, set:
+
+```yaml
+terraformState:
+  state: existing
+```
+
+If Horizon should bootstrap the state backend during onboarding, set:
+
+```yaml
+terraformState:
+  state: provision
+```
+
+Then run:
+
+```bash
+bash secure_SDLC_Platform/scripts/install.sh \
+  --phase state \
+  -f client-values.local.yaml \
+  --auto-approve
+```
+
+The state bucket, lock table, and state KMS key should normally use `deletionPolicy: retain`.
+
+## Destroy Workflow
+
+Destroy is selected-environment only. It intentionally does not remove client-owned shared resources, existing IAM roles, or Terraform state.
+
+Dry-run:
+
+```bash
+bash secure_SDLC_Platform/scripts/destroy.sh \
+  -f client-values.local.yaml \
+  --environment QA \
+  --dry-run
+```
+
+Confirmed destroy:
+
+```bash
+bash secure_SDLC_Platform/scripts/destroy.sh \
+  -f client-values.local.yaml \
+  --environment QA \
+  --confirm QA
+```
+
+The destroy script removes only resources that satisfy all of these conditions:
+
+1. They are in the selected environment.
+2. They are marked `state=provision`.
+3. They are marked `deletionPolicy=delete`.
+4. Terraform state proves the installer created them.
 
 ## Online License Sync
 

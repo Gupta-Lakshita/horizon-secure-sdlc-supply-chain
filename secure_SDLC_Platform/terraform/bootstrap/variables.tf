@@ -4,31 +4,62 @@ variable "aws_region" {
   default     = "us-east-1"
 }
 
-variable "create_artifact_bucket" {
-  description = "Whether to create the client artifact bucket."
+variable "tags" {
+  description = "Common tags applied to created resources."
+  type        = map(string)
+  default     = {}
+}
+
+variable "create_state_bucket" {
+  description = "Whether to create the Terraform remote-state bucket and lock table."
   type        = bool
-  default     = true
+  default     = false
+}
+
+variable "state_bucket_name" {
+  description = "Client-owned Terraform state bucket name."
+  type        = string
+  default     = ""
+}
+
+variable "state_lock_table_name" {
+  description = "DynamoDB table name for Terraform state locking."
+  type        = string
+  default     = ""
+}
+
+variable "state_kms_key_arn" {
+  description = "Optional KMS key ARN for state bucket encryption."
+  type        = string
+  default     = ""
+}
+
+variable "state_key_prefix" {
+  description = "Key prefix used for environment state objects."
+  type        = string
+  default     = "horizon-installer"
+}
+
+variable "create_artifact_bucket" {
+  description = "Legacy bootstrap option for a client artifact bucket."
+  type        = bool
+  default     = false
 }
 
 variable "artifact_bucket_name" {
-  description = "Client-owned S3 artifact bucket name."
+  description = "Legacy client-owned S3 artifact bucket name."
   type        = string
+  default     = ""
 }
 
 variable "product_repositories" {
-  description = "ECR repositories for mirrored Horizon product images."
-  type        = list(string)
-  default = [
-    "horizon/frontend",
-    "horizon/backend",
-    "horizon/jenkins",
-    "horizon/scanner"
-  ]
-}
-
-variable "application_repositories" {
-  description = "ECR repositories for client application images."
+  description = "Legacy ECR repositories for mirrored Horizon product images."
   type        = list(string)
   default     = []
 }
 
+variable "application_repositories" {
+  description = "Legacy ECR repositories for client application images."
+  type        = list(string)
+  default     = []
+}

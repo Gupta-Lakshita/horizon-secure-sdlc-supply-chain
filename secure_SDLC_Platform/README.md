@@ -14,12 +14,15 @@ The product code remains in the existing backend, frontend, and Jenkins shared-l
 ## Installer Contents
 
 - `examples/client-values.yaml`: client-hosted values contract with Environment Catalog and generic role mapping.
+- `examples/client-hybrid-onboarding-values.yaml`: generic desired-state file for mixed client estates where some resources exist and others must be provisioned.
 - `examples/regeneron-trial-values.yaml`: healthcare/pharma trial example with online license sync and DEV/QA/PROD account mapping.
 - `helm/horizon-platform`: umbrella Helm chart skeleton for platform configuration and license/enterprise values.
-- `terraform/bootstrap`: bootstrap Terraform skeleton for client-owned S3/ECR foundation.
+- `terraform/bootstrap`: bootstrap Terraform for client-owned artifact/ECR resources and optional Terraform remote-state S3/DynamoDB backend.
+- `terraform/environment`: environment-scoped Terraform for VPC, KMS, EKS, EBS CSI, ingress, namespace, EKS access entries, S3/ECR, and optional deploy roles.
 - `scripts/preflight.sh`: validates local tools, AWS access, values, and BYO cluster access.
 - `scripts/install.sh`: runs infrastructure and/or platform installation phases.
 - `scripts/validate.sh`: validates the installed namespace, enterprise config, license defaults, and pods.
+- `scripts/destroy.sh`: safely destroys only selected environment resources marked `state=provision` and `deletionPolicy=delete`.
 - `docs/client-enterprise-architecture.md`: conceptual techno-functional architecture for client-hosted enterprise deployments.
 - `docs/client-values-reference.md`: YAML structure reference for Environment Catalog, generic LDAP/AD role mapping, and product image settings.
 - `docs/aws-iam-eks-prerequisites.md`: client AWS IAM, Jenkins IRSA, deploy-role, EKS access-entry, and namespace-scoped prerequisites.
@@ -30,29 +33,37 @@ The product code remains in the existing backend, frontend, and Jenkins shared-l
 - `docs/installer-runbook.md`: step-by-step installer guideline for full-provision and BYO infrastructure modes.
 - `docs/sensitive-client-data-strategy.md`: repository ownership and sensitive client data handling model.
 - `docs/private-ecr-image-distribution.md`: private ECR image publishing, client pull access, and container extraction risk model.
+- `docs/generic-hybrid-installer-lifecycle.md`: desired-state lifecycle for provision, validate, remote state, and destroy.
 
 ## Quick Start
 
-Copy the sample values and run preflight:
+Copy the generic hybrid sample values and run local preflight:
 
 ```bash
-cp secure_SDLC_Platform/examples/regeneron-trial-values.yaml regeneron-trial.local.yaml
-bash secure_SDLC_Platform/scripts/preflight.sh -f regeneron-trial.local.yaml
+cp secure_SDLC_Platform/examples/client-hybrid-onboarding-values.yaml client-values.local.yaml
+bash secure_SDLC_Platform/scripts/preflight.sh -f client-values.local.yaml --environment QA --dry-run --skip-aws
 ```
 
-Install platform-only for BYO infrastructure:
+Provision or validate in this order:
 
 ```bash
-bash secure_SDLC_Platform/scripts/install.sh --phase platform -f regeneron-trial.local.yaml
+# Optional: create remote Terraform state backend when terraformState.state=provision
+bash secure_SDLC_Platform/scripts/install.sh --phase state -f client-values.local.yaml --dry-run
+
+# Provision only selected-environment resources marked state=provision
+bash secure_SDLC_Platform/scripts/install.sh --phase infra -f client-values.local.yaml --environment QA --dry-run
+
+# Render/install the Horizon platform Helm chart
+bash secure_SDLC_Platform/scripts/install.sh --phase platform -f client-values.local.yaml --dry-run
 ```
 
 Validate:
 
 ```bash
-bash secure_SDLC_Platform/scripts/validate.sh -f regeneron-trial.local.yaml
+bash secure_SDLC_Platform/scripts/validate.sh -f client-values.local.yaml --environment QA --skip-aws
 ```
 
-See `docs/client-enterprise-architecture.md` for the conceptual architecture, `docs/installer-runbook.md` for the full installation guide, `docs/client-values-reference.md` for the current YAML structure, `docs/aws-iam-eks-prerequisites.md` for client AWS prerequisites, and `docs/validation-only-namespace-scoped-access.md` for the enterprise access model.
+See `docs/client-enterprise-architecture.md` for the conceptual architecture, `docs/installer-runbook.md` for the full installation guide, `docs/generic-hybrid-installer-lifecycle.md` for lifecycle commands, `docs/client-values-reference.md` for the current YAML structure, `docs/aws-iam-eks-prerequisites.md` for client AWS prerequisites, and `docs/validation-only-namespace-scoped-access.md` for the enterprise access model.
 
 ## Current Hardened Product Image Contract
 

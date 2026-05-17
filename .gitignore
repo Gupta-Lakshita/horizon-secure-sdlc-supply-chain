@@ -6,6 +6,7 @@
 *.auto.tfvars
 *.local.yaml
 client-values.generated.yaml
+secure_SDLC_Platform/.generated/
+**/.terraform/
 license*.json
 secrets*.yaml
-

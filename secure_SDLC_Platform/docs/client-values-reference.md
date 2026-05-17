@@ -5,12 +5,13 @@
 1. [Purpose](#purpose)
 2. [Ownership Model](#ownership-model)
 3. [Top-Level Structure](#top-level-structure)
-4. [Environment Catalog](#environment-catalog)
-5. [Generic Role Mapping](#generic-role-mapping)
-6. [Product Images](#product-images)
-7. [Runtime Resolution Flow](#runtime-resolution-flow)
-8. [Recommended File Layout](#recommended-file-layout)
-9. [Validation Checklist](#validation-checklist)
+4. [Desired-State Resource Lifecycle](#desired-state-resource-lifecycle)
+5. [Environment Catalog](#environment-catalog)
+6. [Generic Role Mapping](#generic-role-mapping)
+7. [Product Images](#product-images)
+8. [Runtime Resolution Flow](#runtime-resolution-flow)
+9. [Recommended File Layout](#recommended-file-layout)
+10. [Validation Checklist](#validation-checklist)
 
 ## Purpose
 
@@ -30,27 +31,63 @@ Do not commit real secrets, activation tokens, bind passwords, private keys, or 
 installer: {}
 client: {}
 domain: {}
-aws: {}
+terraformState: {}
+lifecycle: {}
+platform: {}
 accessModel: {}
+sharedServices: {}
+environments: []
 environmentCatalog: {}
 license: {}
 identity: {}
 components: {}
-existingInfrastructure: {}
 ```
 
 | Section | Owner | Purpose |
 | --- | --- | --- |
-| `installer` | Client platform team with Horizon support | Selects `full-provision` or `byo-infra`, release name, and platform namespace. |
+| `installer` | Client platform team with Horizon support | Selects `full-provision`, `partial-provision`, `byo-infra`, `validate-only`, or `hybrid`, release name, and platform namespace. |
 | `client` | Client/Horizon onboarding | Defines client ID, display name, industry, and data boundary. |
 | `domain` | Client DNS/platform team | Defines frontend, backend, Jenkins, Keycloak, and SonarQube hosts. |
-| `aws` | Client cloud team | Keeps bootstrap account mappings for Terraform and preflight compatibility. |
+| `terraformState` | Client cloud/platform team | Defines the client-owned S3 backend bucket, state key prefix, lock table, and optional state KMS key. |
+| `lifecycle` | Client cloud/platform team | Defines deletion protection and default retention behavior. |
+| `platform` | Client platform team | Defines the cluster/namespace where Horizon platform components run and the product image registry. |
 | `accessModel` | Client cloud/platform team | Selects validation-only IAM, namespace-scoped EKS access, and Jenkins IRSA runtime role. |
-| `environmentCatalog` | Platform admin | The runtime source of truth for DEV/QA/STAGE/PROD deployment settings. |
+| `sharedServices` | Client cloud/platform team | Defines shared artifact bucket, ECR repository, and notification provider defaults. |
+| `environments` | Client cloud/platform team | Desired-state source of truth for DEV/QA/STAGE/PROD resources and lifecycle state. |
+| `environmentCatalog` | Platform admin / generated | Runtime catalog served to the backend. In hybrid mode this can be generated from `environments`. |
 | `license` | Horizon issues, client installs | Controls trial/paid/enterprise entitlements. |
 | `identity` | Client IAM/IdP team | Configures OIDC/SAML/LDAP mode and group-to-role mappings. |
 | `components` | Horizon release + client platform team | Selects product image tags and optional services. |
-| `existingInfrastructure` | Client platform team | Declares which platform dependencies already exist. |
+
+Use `secure_SDLC_Platform/examples/client-hybrid-onboarding-values.yaml` as the preferred enterprise starting point. It supports clients that have only AWS accounts and DNS, clients that already have some platform services, and clients that need only selected environments such as QA/STAGE provisioned.
+
+## Desired-State Resource Lifecycle
+
+The preferred hybrid file uses the same lifecycle vocabulary everywhere:
+
+| State | Meaning |
+| --- | --- |
+| `existing` | Client owns the resource. Installer validates it but does not create or delete it. |
+| `provision` | Installer may create or configure it through Terraform or Helm. |
+| `disabled` | Resource is intentionally not used. |
+
+Deletion policies:
+
+| Deletion Policy | Meaning |
+| --- | --- |
+| `retain` | Destroy skips the resource. |
+| `delete` | Destroy may remove it only when Terraform state proves the installer created it. |
+
+Terraform state is also client-owned:
+
+```yaml
+terraformState:
+  state: existing
+  backend: s3
+  bucket: acme-fintech-devsecops-tfstate
+  lockTable: acme-fintech-devsecops-tflock
+  keyPrefix: horizon-installer
+```
 
 ## Environment Catalog
 
@@ -232,7 +269,7 @@ Use the Horizon installer repository as the product template. Keep real client v
 
 1. `client.id` matches the license client ID.
 2. `license.syncEndpoint` is reachable from the backend pod.
-3. `environmentCatalog.environments` includes every selectable environment.
+3. `environments` or generated `environmentCatalog.environments` includes every selectable environment.
 4. Each active environment has ECR, S3, role ARN, cluster, and namespace strategy configured.
 5. Production uses separate `sourceAwsRoleArn` and `targetAwsRoleArn` when accounts are separated.
 6. LDAP/AD role mappings use client-owned groups, not Horizon demo group names.
