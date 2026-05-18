@@ -120,6 +120,24 @@ aws eks associate-access-policy \
 
 `AmazonEKSEditPolicy` is the preferred managed policy for application deployments scoped to one namespace. Avoid `AmazonEKSClusterAdminPolicy` for deploy roles unless the role is a temporary platform bootstrap role. For strict Kubernetes RBAC, bind only the required verbs in the namespace used by the application.
 
+The deploy role also needs read-only EKS access-entry permissions so Horizon can validate the namespace scope during preflight:
+
+```json
+{
+  "Sid": "EksAccessPolicyReadOnlyValidation",
+  "Effect": "Allow",
+  "Action": [
+    "eks:DescribeAccessEntry",
+    "eks:ListAccessEntries",
+    "eks:ListAssociatedAccessPolicies",
+    "eks:ListAccessPolicies"
+  ],
+  "Resource": "*"
+}
+```
+
+Without those read-only permissions, the environment can show `ready_with_warnings` even when the namespace association exists, because Horizon cannot prove the association through AWS APIs.
+
 ## Jenkins IRSA Model
 
 Jenkins should use its service account role, not the EKS node role.

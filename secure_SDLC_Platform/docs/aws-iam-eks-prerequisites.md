@@ -211,6 +211,17 @@ Minimum AWS permission policy for build/deploy roles:
       "Resource": "arn:aws:eks:<region>:<account-id>:cluster/<cluster-name>"
     },
     {
+      "Sid": "EksAccessPolicyReadOnlyValidation",
+      "Effect": "Allow",
+      "Action": [
+        "eks:DescribeAccessEntry",
+        "eks:ListAccessEntries",
+        "eks:ListAssociatedAccessPolicies",
+        "eks:ListAccessPolicies"
+      ],
+      "Resource": "*"
+    },
+    {
       "Sid": "ProdSecretManagementOptional",
       "Effect": "Allow",
       "Action": [
@@ -226,6 +237,8 @@ Minimum AWS permission policy for build/deploy roles:
 ```
 
 Remove `CreateRepository` if the client requires ECR repositories to be pre-created by platform/IaC only. Remove the Secrets Manager statement if production secret generation is not enabled.
+
+`EksClusterDiscovery` is required so Jenkins/backend can discover the target cluster before running `aws eks update-kubeconfig`. `EksAccessPolicyReadOnlyValidation` is required for Horizon preflight to confirm that the deploy role is mapped into EKS with namespace-scoped access. Without the read-only access-policy calls, the environment may show `ready_with_warnings` with `Unable to validate EKS access policies: AccessDeniedException` even when deployment might otherwise work.
 
 ## Namespace-Scoped EKS Access
 
