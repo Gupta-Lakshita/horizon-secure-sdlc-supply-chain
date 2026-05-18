@@ -99,6 +99,13 @@ domain:
     deletionPolicy: retain
     acmCertificateArn: ""
 
+catalogSync:
+  # Internal demo endpoint currently uses a certificate chain that local curl
+  # cannot validate. Enterprise installs should keep tlsVerify=true or provide
+  # caBundlePath for the client/private CA.
+  tlsVerify: false
+  caBundlePath: ""
+
 identity:
   mode: existing-ldap # client-oidc | client-saml | existing-ldap | managed-keycloak-openldap
   keycloak:

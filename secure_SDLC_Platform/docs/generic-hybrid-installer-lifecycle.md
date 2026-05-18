@@ -298,7 +298,7 @@ bash secure_SDLC_Platform/scripts/install.sh \
   --dry-run
 ```
 
-The catalog phase uses Terraform outputs when available, then falls back to the values file. It posts to `<frontendHost><backendPath>/environment-catalog` unless `catalogSync.backendUrl`, `installer.backendUrl`, or `domain.platformHosts.backendUrl` is configured. Set `CATALOG_SYNC_TOKEN` when the backend requires a bearer token. Set `CATALOG_SYNC_INSECURE=true` only for internal demos that use a temporary or self-signed TLS certificate.
+The catalog phase uses Terraform outputs when available, then falls back to the values file. It posts to `<frontendHost><backendPath>/environment-catalog` unless `catalogSync.backendUrl`, `installer.backendUrl`, or `domain.platformHosts.backendUrl` is configured. Set `CATALOG_SYNC_TOKEN` when the backend requires a bearer token. TLS verification is enabled by default. For private enterprise CAs, set `catalogSync.caBundlePath`; for internal demos only, set `catalogSync.tlsVerify: false`, pass `--insecure-catalog-sync`, or run with `CATALOG_SYNC_INSECURE=true`.
 
 ### Validate
 

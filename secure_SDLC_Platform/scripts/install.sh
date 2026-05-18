@@ -6,13 +6,14 @@ VALUES_FILE=""
 ENVIRONMENT=""
 DRY_RUN="false"
 AUTO_APPROVE="false"
+CATALOG_SYNC_INSECURE_FLAG="false"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 HELPER="${SCRIPT_DIR}/values-helper.rb"
 GENERATED_DIR="${ROOT_DIR}/.generated"
 
 usage() {
-  echo "Usage: $0 --phase <state|infra|platform|catalog|all> -f <client-values.yaml> [--environment ENV] [--dry-run] [--auto-approve]"
+  echo "Usage: $0 --phase <state|infra|platform|catalog|all> -f <client-values.yaml> [--environment ENV] [--dry-run] [--auto-approve] [--insecure-catalog-sync]"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -22,6 +23,7 @@ while [[ $# -gt 0 ]]; do
     -e|--environment) ENVIRONMENT="${2:-}"; shift 2 ;;
     --dry-run) DRY_RUN="true"; shift ;;
     --auto-approve) AUTO_APPROVE="true"; shift ;;
+    --insecure-catalog-sync) CATALOG_SYNC_INSECURE_FLAG="true"; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage; exit 1 ;;
   esac
@@ -124,6 +126,23 @@ catalog_backend_base_url() {
   echo "${url%/}"
 }
 
+catalog_tls_verify() {
+  local tls_verify
+  tls_verify="$(ruby "${HELPER}" get --file "${VALUES_FILE}" --path catalogSync.tlsVerify)"
+  if [[ "${CATALOG_SYNC_INSECURE:-false}" == "true" || "${CATALOG_SYNC_INSECURE_FLAG}" == "true" || "${tls_verify}" == "false" ]]; then
+    echo "false"
+  else
+    echo "true"
+  fi
+}
+
+catalog_ca_bundle() {
+  local ca_bundle
+  ca_bundle="${CATALOG_SYNC_CA_BUNDLE:-}"
+  [[ -z "${ca_bundle}" ]] && ca_bundle="$(ruby "${HELPER}" get --file "${VALUES_FILE}" --path catalogSync.caBundlePath)"
+  echo "${ca_bundle}"
+}
+
 write_catalog_payload() {
   local env_lc payload_file output_file terraform_output_file files backend_file
   env_lc="all"
@@ -159,7 +178,7 @@ write_catalog_payload() {
 run_catalog() {
   echo "== Environment Catalog sync phase =="
   command -v curl >/dev/null || { echo "Missing required command: curl" >&2; exit 1; }
-  local payload_file base_url endpoint curl_args
+  local payload_file base_url endpoint curl_args tls_verify ca_bundle curl_output curl_status
   payload_file="$(write_catalog_payload)"
   base_url="$(catalog_backend_base_url)"
   if [[ "${base_url}" == */environment-catalog ]]; then
@@ -177,8 +196,32 @@ run_catalog() {
 
   curl_args=(--fail --show-error --silent -X POST "${endpoint}" -H "Content-Type: application/json" --data-binary "@${payload_file}")
   [[ -n "${CATALOG_SYNC_TOKEN:-}" ]] && curl_args+=(-H "Authorization: Bearer ${CATALOG_SYNC_TOKEN}")
-  [[ "${CATALOG_SYNC_INSECURE:-false}" == "true" ]] && curl_args+=(--insecure)
-  curl "${curl_args[@]}"
+  tls_verify="$(catalog_tls_verify)"
+  ca_bundle="$(catalog_ca_bundle)"
+  if [[ "${tls_verify}" == "false" ]]; then
+    echo "Warning: catalogSync.tlsVerify=false. Skipping TLS certificate verification for catalog sync." >&2
+    curl_args+=(--insecure)
+  elif [[ -n "${ca_bundle}" ]]; then
+    curl_args+=(--cacert "${ca_bundle}")
+  fi
+
+  set +e
+  curl_output="$(curl "${curl_args[@]}" 2>&1)"
+  curl_status=$?
+  set -e
+  if [[ ${curl_status} -ne 0 ]]; then
+    echo "${curl_output}" >&2
+    if [[ ${curl_status} -eq 60 ]]; then
+      cat >&2 <<EOF
+
+Catalog sync failed because curl could not verify the backend TLS certificate.
+Enterprise fix: install a trusted ACM/public certificate chain or set catalogSync.caBundlePath to the client CA bundle.
+Internal demo workaround: set catalogSync.tlsVerify: false in the values file, pass --insecure-catalog-sync, or run with CATALOG_SYNC_INSECURE=true.
+EOF
+    fi
+    exit "${curl_status}"
+  fi
+  echo "${curl_output}"
   echo
   echo "Environment Catalog synced through ${endpoint}"
 }

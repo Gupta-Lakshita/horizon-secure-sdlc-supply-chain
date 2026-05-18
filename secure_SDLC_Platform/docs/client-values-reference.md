@@ -33,6 +33,7 @@ installer: {}
 naming: {}
 client: {}
 domain: {}
+catalogSync: {}
 terraformState: {}
 lifecycle: {}
 platform: {}
@@ -51,6 +52,7 @@ components: {}
 | `naming` | Client platform/cloud standards team | Defines the client-approved prefix, managed-by tag value, and KMS alias namespace for installer-created resources. |
 | `client` | Client/Horizon onboarding | Defines client ID, display name, industry, and data boundary. |
 | `domain` | Client DNS/platform team | Defines frontend, backend, Jenkins, Keycloak, and SonarQube hosts. |
+| `catalogSync` | Client platform team | Controls installer-to-backend Environment Catalog sync endpoint, TLS verification, and optional CA bundle. |
 | `terraformState` | Client cloud/platform team | Defines the client-owned S3 backend bucket, state key prefix, lock table, and optional state KMS key. |
 | `lifecycle` | Client cloud/platform team | Defines deletion protection and default retention behavior. |
 | `platform` | Client platform team | Defines the cluster/namespace where Horizon platform components run and the product image registry. |

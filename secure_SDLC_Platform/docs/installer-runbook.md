@@ -237,7 +237,7 @@ bash secure_SDLC_Platform/scripts/install.sh \
   -f client-values.local.yaml
 ```
 
-By default, the endpoint is derived from `domain.platformHosts.frontendHost` and `domain.platformHosts.backendPath`, for example `https://horizonrelevance.com/pipeline/api/environment-catalog`. For a private endpoint, set `catalogSync.backendUrl`, `installer.backendUrl`, or `domain.platformHosts.backendUrl` in the values file. Use `CATALOG_SYNC_TOKEN` when the backend requires bearer-token automation access.
+By default, the endpoint is derived from `domain.platformHosts.frontendHost` and `domain.platformHosts.backendPath`, for example `https://horizonrelevance.com/pipeline/api/environment-catalog`. For a private endpoint, set `catalogSync.backendUrl`, `installer.backendUrl`, or `domain.platformHosts.backendUrl` in the values file. Use `CATALOG_SYNC_TOKEN` when the backend requires bearer-token automation access. TLS verification is enabled by default; enterprise clients should provide a trusted public certificate or `catalogSync.caBundlePath` for a private CA. Use `catalogSync.tlsVerify: false`, `--insecure-catalog-sync`, or `CATALOG_SYNC_INSECURE=true` only for internal demos.
 
 ## Mode 1: Full Platform Provisioning
 
