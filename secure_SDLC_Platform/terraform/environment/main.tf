@@ -41,6 +41,7 @@ locals {
   name_prefix               = "${var.client_id}-${lower(var.environment_name)}"
   node_group_name           = substr("${local.name_prefix}-ng", 0, 38)
   node_group_iam_role_name  = substr("${local.name_prefix}-ng-role", 0, 64)
+  ebs_csi_role_name         = substr("${local.name_prefix}-ebs-csi-role", 0, 64)
   created_kms_key           = var.create_kms_key ? aws_kms_key.environment[0].arn : ""
   kms_key_arn               = var.existing_kms_key_arn != "" ? var.existing_kms_key_arn : local.created_kms_key
   vpc_id                    = var.create_vpc ? module.vpc[0].vpc_id : var.existing_vpc_id
@@ -257,11 +258,107 @@ module "eks" {
   tags = var.tags
 }
 
+data "aws_iam_policy_document" "ebs_csi_assume_role" {
+  count = var.create_ebs_csi_driver && var.create_eks_cluster ? 1 : 0
+
+  statement {
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+
+    principals {
+      type        = "Federated"
+      identifiers = [module.eks[0].oidc_provider_arn]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "${module.eks[0].oidc_provider}:aud"
+      values   = ["sts.amazonaws.com"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "${module.eks[0].oidc_provider}:sub"
+      values   = ["system:serviceaccount:kube-system:ebs-csi-controller-sa"]
+    }
+  }
+}
+
+resource "aws_iam_role" "ebs_csi" {
+  count              = var.create_ebs_csi_driver && var.create_eks_cluster ? 1 : 0
+  name               = local.ebs_csi_role_name
+  assume_role_policy = data.aws_iam_policy_document.ebs_csi_assume_role[0].json
+  tags               = var.tags
+}
+
+resource "aws_iam_role_policy_attachment" "ebs_csi" {
+  count      = var.create_ebs_csi_driver && var.create_eks_cluster ? 1 : 0
+  role       = aws_iam_role.ebs_csi[0].name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
+}
+
 resource "aws_eks_addon" "ebs_csi" {
-  count        = var.create_ebs_csi_driver ? 1 : 0
-  cluster_name = var.eks_cluster_name
-  addon_name   = "aws-ebs-csi-driver"
-  tags         = var.tags
+  count                    = var.create_ebs_csi_driver ? 1 : 0
+  cluster_name             = var.eks_cluster_name
+  addon_name               = "aws-ebs-csi-driver"
+  service_account_role_arn = var.create_eks_cluster ? aws_iam_role.ebs_csi[0].arn : null
+  tags                     = var.tags
+
+  timeouts {
+    create = "30m"
+    update = "30m"
+    delete = "30m"
+  }
+
+  depends_on = [
+    module.eks,
+    aws_iam_role_policy_attachment.ebs_csi
+  ]
+}
+
+resource "null_resource" "eks_authentication_mode" {
+  count = var.create_eks_access_entry ? 1 : 0
+
+  triggers = {
+    cluster_name = var.eks_cluster_name
+    aws_region   = var.aws_region
+    mode         = "API_AND_CONFIG_MAP"
+  }
+
+  provisioner "local-exec" {
+    interpreter = ["/usr/bin/env", "bash", "-c"]
+    command     = <<-EOT
+      set -euo pipefail
+      current_mode="$(aws eks describe-cluster \
+        --region "${self.triggers.aws_region}" \
+        --name "${self.triggers.cluster_name}" \
+        --query 'cluster.accessConfig.authenticationMode' \
+        --output text)"
+
+      if [ "$${current_mode}" = "CONFIG_MAP" ]; then
+        update_id="$(aws eks update-cluster-config \
+          --region "${self.triggers.aws_region}" \
+          --name "${self.triggers.cluster_name}" \
+          --access-config authenticationMode="${self.triggers.mode}" \
+          --query 'update.id' \
+          --output text)"
+
+        for i in $(seq 1 60); do
+          status="$(aws eks describe-update \
+            --region "${self.triggers.aws_region}" \
+            --name "${self.triggers.cluster_name}" \
+            --update-id "$${update_id}" \
+            --query 'update.status' \
+            --output text)"
+          [ "$${status}" = "Successful" ] && exit 0
+          [ "$${status}" = "Failed" ] && exit 1
+          [ "$${status}" = "Cancelled" ] && exit 1
+          sleep 10
+        done
+        echo "Timed out waiting for EKS authentication mode update" >&2
+        exit 1
+      fi
+    EOT
+  }
 
   depends_on = [module.eks]
 }
@@ -278,7 +375,8 @@ resource "null_resource" "application_namespace" {
   }
 
   provisioner "local-exec" {
-    command = <<-EOT
+    interpreter = ["/usr/bin/env", "bash", "-c"]
+    command     = <<-EOT
       set -euo pipefail
       aws eks update-kubeconfig --region "${self.triggers.aws_region}" --name "${self.triggers.cluster_name}" >/dev/null
       kubectl create namespace "${self.triggers.namespace_name}" --dry-run=client -o yaml | kubectl apply -f -
@@ -291,8 +389,9 @@ resource "null_resource" "application_namespace" {
   }
 
   provisioner "local-exec" {
-    when    = destroy
-    command = <<-EOT
+    when        = destroy
+    interpreter = ["/usr/bin/env", "bash", "-c"]
+    command     = <<-EOT
       set -euo pipefail
       aws eks update-kubeconfig --region "${self.triggers.aws_region}" --name "${self.triggers.cluster_name}" >/dev/null
       kubectl delete namespace "${self.triggers.namespace_name}" --ignore-not-found=true
@@ -314,7 +413,8 @@ resource "null_resource" "eks_access_entry" {
   }
 
   provisioner "local-exec" {
-    command = <<-EOT
+    interpreter = ["/usr/bin/env", "bash", "-c"]
+    command     = <<-EOT
       set -euo pipefail
       aws eks describe-access-entry \
         --cluster-name "${self.triggers.cluster_name}" \
@@ -341,8 +441,9 @@ resource "null_resource" "eks_access_entry" {
   }
 
   provisioner "local-exec" {
-    when    = destroy
-    command = <<-EOT
+    when        = destroy
+    interpreter = ["/usr/bin/env", "bash", "-c"]
+    command     = <<-EOT
       set -euo pipefail
       aws eks disassociate-access-policy \
         --cluster-name "${self.triggers.cluster_name}" \
@@ -356,6 +457,7 @@ resource "null_resource" "eks_access_entry" {
 
   depends_on = [
     module.eks,
+    null_resource.eks_authentication_mode,
     aws_iam_role.deploy,
     null_resource.application_namespace
   ]
@@ -374,7 +476,8 @@ resource "null_resource" "ingress_nginx" {
   }
 
   provisioner "local-exec" {
-    command = <<-EOT
+    interpreter = ["/usr/bin/env", "bash", "-c"]
+    command     = <<-EOT
       set -euo pipefail
       aws eks update-kubeconfig --region "${self.triggers.aws_region}" --name "${self.triggers.cluster_name}" >/dev/null
       helm repo add ingress-nginx "${self.triggers.repository}" >/dev/null 2>&1 || true
@@ -387,8 +490,9 @@ resource "null_resource" "ingress_nginx" {
   }
 
   provisioner "local-exec" {
-    when    = destroy
-    command = <<-EOT
+    when        = destroy
+    interpreter = ["/usr/bin/env", "bash", "-c"]
+    command     = <<-EOT
       set -euo pipefail
       aws eks update-kubeconfig --region "${self.triggers.aws_region}" --name "${self.triggers.cluster_name}" >/dev/null
       helm uninstall "${self.triggers.release_name}" --namespace "${self.triggers.namespace}" >/dev/null 2>&1 || true
