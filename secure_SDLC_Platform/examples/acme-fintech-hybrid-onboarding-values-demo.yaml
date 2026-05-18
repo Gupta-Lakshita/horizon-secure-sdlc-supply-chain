@@ -1,0 +1,666 @@
+# Generic client-hosted onboarding values.
+#
+# This file is the desired-state contract for enterprise onboarding. Copy it to a
+# client-local file and update the values for the client account. Do not commit
+# client-local files containing private endpoints, account details, tokens, or secrets.
+#
+# Resource lifecycle values:
+# - existing: client already owns the resource; preflight/validate verifies it.
+# - provision: installer may create/configure the resource through Terraform/Helm.
+# - disabled: resource is intentionally not used for this environment.
+#
+# Deletion policy values:
+# - retain: destroy skips the resource even if it is referenced.
+# - delete: destroy may remove it only if Terraform state proves the installer created it.
+
+installer:
+  mode: hybrid # full-provision | partial-provision | byo-infra | validate-only | hybrid
+  releaseName: horizon-internal-devsecops-platform
+  namespace: horizon-relevance-dev
+  dryRunDefault: true
+  targetEnvironments:
+    - DEV
+    - QA
+    - STAGE
+    - PROD
+
+terraformState:
+  state: provision # existing | provision
+  backend: s3
+  bucket: acme-fintech-devsecops-tfstate
+  region: us-east-1
+  lockTable: acme-fintech-devsecops-tflock
+  kmsKeyArn: ""
+  keyPrefix: horizon-installer
+  createBackendResources: false
+  deletionPolicy: retain
+
+lifecycle:
+  deletionProtection: true
+  requireTypedConfirmation: true
+  allowDestroyExistingResources: false
+  defaultDeletionPolicy: retain
+
+client:
+  id: acme-fintech
+  name: "Acme Fintech"
+  industry: fintech
+  dataBoundary: client-hosted
+
+license:
+  enforcementEnabled: true
+  mode: online-sync
+  syncEndpoint: https://license.horizonrelevance.com/api/v1/licenses/sync
+  clientId: acme-fintech
+  activationTokenSecretName: horizon-license-activation
+  renewalCheckHours: 24
+  type: trial
+  expiresAt: "2026-06-16T23:59:59Z"
+  enabledPipelines:
+    - Build & Deploy Pipeline
+    - Test DevSecOps Pipeline
+    - Production Release Pipeline
+  enabledFeatures:
+    - build
+    - artifact_publish
+    - code_scan
+    - image_scan
+    - policy_validation
+    - static_application_security
+    - test_suites
+    - notifications
+    - production_promotion
+  allowedEnvironments:
+    - DEV
+    - QA
+    - STAGE
+    - PROD
+  allowedAwsAccountIds:
+    - "426946630837"
+  installationId: acme-fintech-horizon-trial-001
+  limits:
+    maxRepos: 10
+    maxBuildsPerMonth: 100
+    maxUsers: 25
+
+domain:
+  state: existing # existing | provision | disabled
+  deletionPolicy: retain
+  provider: route53 # route53 | external-dns | manual
+  baseDomain: horizonrelevance.com
+  platformHosts:
+    frontendHost: horizonrelevance.com
+    backendPath: /pipeline/api
+    jenkinsHost: horizonrelevance.com
+    jenkinsPath: /jenkins
+    sonarqubeHost: sonar.horizonrelevance.com
+  certificate:
+    state: existing # existing | provision | disabled
+    deletionPolicy: retain
+    acmCertificateArn: ""
+
+identity:
+  mode: existing-ldap # client-oidc | client-saml | existing-ldap | managed-keycloak-openldap
+  keycloak:
+    state: existing # existing | provision | disabled
+    deletionPolicy: retain
+    deploy: true
+  ldap:
+    state: existing # existing | provision | disabled
+    deletionPolicy: retain
+    enabled: true
+    host: ldap://openldap.horizon-relevance-dev.svc.cluster.local:389     #ldaps://ldap.client.example:636
+    baseDn: dc=horizonrelevance,dc=local
+    userBaseDn: ou=Users,dc=horizonrelevance,dc=local
+    bindSecretName: horizon-ldap-bind
+    groupBaseDn: ou=Groups,dc=horizonrelevance,dc=local
+    groupSearchFilter: "(&(objectClass=group)(member={user_dn}))"
+    groupMemberAttribute: member
+    groupNameAttribute: cn
+    userGroupAttribute: memberOf
+    roleGroupMappings:
+      platform-admin:
+        - CN=horizon-Platform-Admins,OU=Groups,DC=horizonrelevance,DC=local
+      developer:
+        - CN=horizon-Developers,OU=Groups,DC=horizonrelevance,DC=local
+      qa:
+        - CN=horizon-QA,OU=Groups,DC=horizonrelevance,DC=local
+      release-manager:
+        - CN=horizon-Release-Managers,OU=Groups,DC=horizonrelevance,DC=local
+      viewer:
+        - CN=horizon-Viewers,OU=Groups,DC=cliehorizonrelevance,DC=local
+
+platform:
+  accountId: "426946630837"
+  region: us-east-1
+  terraform:
+    stateKey: horizon-installer/platform/terraform.tfstate
+  cluster:
+    state: existing # existing | provision | disabled
+    deletionPolicy: retain
+    name: horizon-eks-dev
+    namespace: horizon-relevance-dev
+    ingressClassName: nginx
+    storageClassName: gp3
+  images:
+    deliveryMode: private-ecr # private-ecr | client-ecr-mirror
+    registry: 426946630837.dkr.ecr.us-east-1.amazonaws.com
+    repositories:
+      frontend: horizon/frontend
+      backend: horizon/backend
+      jenkins: horizon/jenkins
+      sonarqube: horizon/sonarqube
+      trivy: horizon/trivy-scanner
+      opa: horizon/opa-scanner
+
+accessModel:
+  iamMode: validation-only # validation-only | provision | disabled
+  eksAccessMode: namespace-scoped
+  jenkins:
+    serviceAccount:
+      state: existing # existing | provision
+      deletionPolicy: retain
+      name: jenkins
+      namespace: horizon-relevance-dev
+    runtimeRole:
+      state: existing # existing | provision
+      deletionPolicy: retain
+      roleArn: arn:aws:iam::426946630837:role/HorizonJenkinsRuntimeRole
+  backend:
+    validationRole:
+      state: existing # existing | provision | disabled
+      deletionPolicy: retain
+      roleArn: arn:aws:iam::426946630837:role/HorizonBackendValidationRole
+  validation:
+    backendPreflightEnforced: true
+    installerValidatesRoles: true
+    failOnClusterScopedDeployRole: true
+
+sharedServices:
+  artifactBucket:
+    state: existing # existing | provision | disabled
+    deletionPolicy: retain
+    name: acme-fintech-devsecops
+    kmsKeyArn: ""
+    retentionDays: 90
+  applicationEcr:
+    state: existing # existing | provision | disabled
+    deletionPolicy: retain
+    registryAccountId: "426946630837"
+    registry: 426946630837.dkr.ecr.us-east-1.amazonaws.com
+    repositoryName: acme-fintech
+    scanOnPush: true
+    kmsKeyArn: ""
+  notifications:
+    state: existing # existing | provision | disabled
+    deletionPolicy: retain
+    provider: smtp # smtp | ses | webhook | sns | disabled
+    requesterDefault: true
+    additionalRecipientsAllowed: true
+    smtpSecretName: horizon-smtp-config
+
+environments:
+  - name: DEV
+    displayName: Development
+    enabled: true
+    accountTier: nonprod
+    terraform:
+      stateKey: horizon-installer/dev/terraform.tfstate
+    aws:
+      accountId: "426946630837"
+      region: us-east-1
+    foundation:
+      vpc:
+        state: existing
+        deletionPolicy: retain
+        vpcId: ""
+        subnetIds: []
+      dns:
+        state: existing
+        deletionPolicy: retain
+        baseDomain: horizonrelevance.com
+      kms:
+        state: existing
+        deletionPolicy: retain
+        keyArn: ""
+      artifactBucket:
+        state: existing
+        deletionPolicy: retain
+        name: acme-fintech-devsecops
+      applicationEcr:
+        state: existing
+        deletionPolicy: retain
+        registryAccountId: "426946630837"
+        registry: 426946630837.dkr.ecr.us-east-1.amazonaws.com
+        repositoryName: acme-fintech
+        repositoryTemplate: acme-fintech
+      secretsManager:
+        state: existing
+        deletionPolicy: retain
+        secretPrefix: /horizon/acme-fintech/dev
+      acm:
+        state: existing
+        deletionPolicy: retain
+        certificateArn: ""
+    iam:
+      mode: validation-only
+      deployRole:
+        state: existing
+        deletionPolicy: retain
+        roleArn: arn:aws:iam::426946630837:role/acme-fintech-role #arn:aws:iam::426946630837:role/HorizonDevDeployRole
+      sourceRole:
+        state: disabled
+        deletionPolicy: retain
+        roleArn: ""
+      targetRole:
+        state: disabled
+        deletionPolicy: retain
+        roleArn: ""
+    eks:
+      state: existing
+      deletionPolicy: retain
+      clusterName: horizon-eks-dev
+      kubernetesVersion: "1.35"
+      endpointPublicAccess: true
+      ebsCsiDriver:
+        state: existing
+        deletionPolicy: retain
+      ingressController:
+        state: existing
+        deletionPolicy: retain
+      nodeGroup:
+        state: existing
+        deletionPolicy: retain
+        instanceTypes:
+          - t3.small
+        desiredSize: 1
+        minSize: 1
+        maxSize: 2
+      namespace:
+        state: existing
+        deletionPolicy: retain
+        strategy: fixed
+        template: horizon-relevance-dev
+      accessEntry:
+        state: provision
+        deletionPolicy: delete
+        policyArn: arn:aws:eks::aws:cluster-access-policy/AmazonEKSEditPolicy
+        scopeType: namespace
+    runtime:
+      isDeployable: true
+      requiresApproval: false
+      appUrlTemplate: https://${projectName}-dev.horizonrelevance.com
+      evidencePrefixTemplate: dev/${projectName}/${buildId}
+
+  - name: QA
+    displayName: Quality Assurance
+    enabled: true
+    accountTier: nonprod
+    terraform:
+      stateKey: horizon-installer/qa/terraform.tfstate
+    aws:
+      accountId: "426946630837"
+      region: us-east-1
+    foundation:
+      vpc:
+        state: provision
+        deletionPolicy: delete
+        vpcId: ""
+        subnetIds: []
+      dns:
+        state: existing
+        deletionPolicy: retain
+        baseDomain: horizonrelevance.com
+      kms:
+        state: provision
+        deletionPolicy: delete
+        keyArn: ""
+      artifactBucket:
+        state: existing
+        deletionPolicy: retain
+        name: acme-fintech-devsecops
+      applicationEcr:
+        state: existing
+        deletionPolicy: retain
+        registryAccountId: "426946630837"
+        registry: 426946630837.dkr.ecr.us-east-1.amazonaws.com
+        repositoryName: acme-fintech
+        repositoryTemplate: acme-fintech
+      secretsManager:
+        state: provision
+        deletionPolicy: delete
+        secretPrefix: /horizon/acme-fintech/qa
+      acm:
+        state: existing
+        deletionPolicy: retain
+        certificateArn: ""
+    iam:
+      mode: validation-only
+      deployRole:
+        state: existing
+        deletionPolicy: retain
+        roleArn: arn:aws:iam::426946630837:role/acme-fintech-role
+      sourceRole:
+        state: disabled
+        deletionPolicy: retain
+        roleArn: ""
+      targetRole:
+        state: disabled
+        deletionPolicy: retain
+        roleArn: ""
+    eks:
+      state: provision
+      deletionPolicy: delete
+      clusterName: horizon-eks-qa
+      kubernetesVersion: "1.35"
+      endpointPublicAccess: true
+      ebsCsiDriver:
+        state: provision
+        deletionPolicy: delete
+      ingressController:
+        state: provision
+        deletionPolicy: delete
+      nodeGroup:
+        state: provision
+        deletionPolicy: delete
+        instanceTypes:
+          - t3.small
+        desiredSize: 1
+        minSize: 1
+        maxSize: 2
+      namespace:
+        state: provision
+        deletionPolicy: delete
+        strategy: fixed
+        template: acme-fintech-angular-qa
+      accessEntry:
+        state: provision
+        deletionPolicy: delete
+        policyArn: arn:aws:eks::aws:cluster-access-policy/AmazonEKSEditPolicy
+        scopeType: namespace
+    runtime:
+      isDeployable: true
+      requiresApproval: false
+      appUrlTemplate: https://${projectName}-qa.horizonrelevance.com
+      evidencePrefixTemplate: qa/${projectName}/${buildId}
+
+  - name: STAGE
+    displayName: Stage
+    enabled: true
+    accountTier: nonprod
+    terraform:
+      stateKey: horizon-installer/stage/terraform.tfstate
+    aws:
+      accountId: "426946630837"
+      region: us-east-1
+    foundation:
+      vpc:
+        state: provision
+        deletionPolicy: delete
+        vpcId: ""
+        subnetIds: []
+      dns:
+        state: existing
+        deletionPolicy: retain
+        baseDomain: horizonrelevance.com
+      kms:
+        state: provision
+        deletionPolicy: delete
+        keyArn: ""
+      artifactBucket:
+        state: existing
+        deletionPolicy: retain
+        name: acme-fintech-devsecops
+      applicationEcr:
+        state: existing
+        deletionPolicy: retain
+        registryAccountId: "426946630837"
+        registry: 426946630837.dkr.ecr.us-east-1.amazonaws.com
+        repositoryName: acme-fintech
+        repositoryTemplate: acme-fintech
+      secretsManager:
+        state: provision
+        deletionPolicy: delete
+        secretPrefix: /horizon/acme-fintech/stage
+      acm:
+        state: existing
+        deletionPolicy: retain
+        certificateArn: ""
+    iam:
+      mode: validation-only
+      deployRole:
+        state: existing
+        deletionPolicy: retain
+        roleArn: arn:aws:iam::426946630837:role/HorizonStageDeployRole
+      sourceRole:
+        state: disabled
+        deletionPolicy: retain
+        roleArn: ""
+      targetRole:
+        state: disabled
+        deletionPolicy: retain
+        roleArn: ""
+    eks:
+      state: provision
+      deletionPolicy: delete
+      clusterName: horizon-eks-stage
+      kubernetesVersion: "1.30"
+      endpointPublicAccess: true
+      ebsCsiDriver:
+        state: provision
+        deletionPolicy: delete
+      ingressController:
+        state: provision
+        deletionPolicy: delete
+      nodeGroup:
+        state: provision
+        deletionPolicy: delete
+        instanceTypes:
+          - t3.small
+        desiredSize: 1
+        minSize: 1
+        maxSize: 2
+      namespace:
+        state: provision
+        deletionPolicy: delete
+        strategy: fixed
+        template: acme-fintech-angular-stage
+      accessEntry:
+        state: provision
+        deletionPolicy: delete
+        policyArn: arn:aws:eks::aws:cluster-access-policy/AmazonEKSEditPolicy
+        scopeType: namespace
+    runtime:
+      isDeployable: true
+      requiresApproval: false
+      appUrlTemplate: https://${projectName}-stage.horizonrelevance.com
+      evidencePrefixTemplate: stage/${projectName}/${buildId}
+
+  - name: PROD
+    displayName: Production
+    enabled: true
+    accountTier: prod
+    terraform:
+      stateKey: horizon-installer/prod/terraform.tfstate
+    aws:
+      accountId: "426946630837"
+      region: us-east-1
+    foundation:
+      vpc:
+        state: disabled
+        deletionPolicy: retain
+        vpcId: ""
+        subnetIds: []
+      dns:
+        state: existing
+        deletionPolicy: retain
+        baseDomain: horizonrelevance.com
+      kms:
+        state: existing
+        deletionPolicy: retain
+        keyArn: ""
+      artifactBucket:
+        state: existing
+        deletionPolicy: retain
+        name: acme-fintech-devsecops
+      applicationEcr:
+        state: existing
+        deletionPolicy: retain
+        registryAccountId: "426946630837"
+        registry: 426946630837.dkr.ecr.us-east-1.amazonaws.com
+        repositoryName: acme-fintech
+        repositoryTemplate: acme-fintech
+      secretsManager:
+        state: existing
+        deletionPolicy: retain
+        secretPrefix: /horizon/acme-fintech/prod
+      acm:
+        state: existing
+        deletionPolicy: retain
+        certificateArn: ""
+    iam:
+      mode: validation-only
+      deployRole:
+        state: disabled
+        deletionPolicy: retain
+        roleArn: ""
+      sourceRole:
+        state: existing
+        deletionPolicy: retain
+        roleArn: arn:aws:iam::426946630837:role/HorizonProdPromotionSourceRole
+      targetRole:
+        state: existing
+        deletionPolicy: retain
+        roleArn: arn:aws:iam::426946630837:role/HorizonProdPromotionTargetRole
+    eks:
+      state: disabled
+      deletionPolicy: retain
+      clusterName: horizon-eks-prod
+      kubernetesVersion: "1.30"
+      endpointPublicAccess: true
+      ebsCsiDriver:
+        state: disabled
+        deletionPolicy: retain
+      ingressController:
+        state: disabled
+        deletionPolicy: retain
+      nodeGroup:
+        state: disabled
+        deletionPolicy: retain
+        instanceTypes:
+          - t3.small
+        desiredSize: 1
+        minSize: 1
+        maxSize: 2
+      namespace:
+        state: disabled
+        deletionPolicy: retain
+        strategy: fixed
+        template: acme-fintech-angular-prod
+      accessEntry:
+        state: disabled
+        deletionPolicy: retain
+        policyArn: arn:aws:eks::aws:cluster-access-policy/AmazonEKSEditPolicy
+        scopeType: namespace
+    runtime:
+      isDeployable: false
+      requiresApproval: true
+      appUrlTemplate: https://${projectName}.horizonrelevance.com
+      evidencePrefixTemplate: prod/${projectName}/${buildId}
+
+environmentCatalog:
+  source: generated-from-environments
+  environments:
+    - name: DEV
+      displayName: Development
+      accountTier: nonprod
+      awsAccountId: "426946630837"
+      awsRegion: us-east-1
+      ecrRegistry: 426946630837.dkr.ecr.us-east-1.amazonaws.com
+      ecrRepositoryTemplate: acme-fintech
+      artifactBucket: acme-fintech-devsecops
+      clientAwsRoleArn: arn:aws:iam::426946630837:role/HorizonDevDeployRole
+      nonprodAwsRoleArn: arn:aws:iam::426946630837:role/HorizonDevDeployRole
+      clusterName: horizon-eks-dev
+      namespaceStrategy: fixed
+      namespaceTemplate: acme-fintech-angular-dev
+      iamValidationMode: validation-only
+      eksAccessMode: namespace-scoped
+      isActive: true
+    - name: QA
+      displayName: Quality Assurance
+      accountTier: nonprod
+      awsAccountId: "426946630837"
+      awsRegion: us-east-1
+      ecrRegistry: 426946630837.dkr.ecr.us-east-1.amazonaws.com
+      ecrRepositoryTemplate: acme-fintech
+      artifactBucket: acme-fintech-devsecops
+      clientAwsRoleArn: arn:aws:iam::426946630837:role/HorizonQaDeployRole
+      nonprodAwsRoleArn: arn:aws:iam::426946630837:role/HorizonQaDeployRole
+      clusterName: horizon-eks-qa
+      namespaceStrategy: fixed
+      namespaceTemplate: acme-fintech-angular-qa
+      iamValidationMode: validation-only
+      eksAccessMode: namespace-scoped
+      isActive: true
+    - name: STAGE
+      displayName: Stage
+      accountTier: nonprod
+      awsAccountId: "426946630837"
+      awsRegion: us-east-1
+      ecrRegistry: 426946630837.dkr.ecr.us-east-1.amazonaws.com
+      ecrRepositoryTemplate: acme-fintech
+      artifactBucket: acme-fintech-devsecops
+      clientAwsRoleArn: arn:aws:iam::426946630837:role/HorizonStageDeployRole
+      nonprodAwsRoleArn: arn:aws:iam::426946630837:role/HorizonStageDeployRole
+      clusterName: horizon-eks-stage
+      namespaceStrategy: fixed
+      namespaceTemplate: acme-fintech-angular-stage
+      iamValidationMode: validation-only
+      eksAccessMode: namespace-scoped
+      isActive: true
+    - name: PROD
+      displayName: Production
+      accountTier: prod
+      awsAccountId: "426946630837"
+      awsRegion: us-east-1
+      ecrRegistry: 426946630837.dkr.ecr.us-east-1.amazonaws.com
+      ecrRepositoryTemplate: acme-fintech
+      artifactBucket: acme-fintech-devsecops
+      sourceAwsRoleArn: arn:aws:iam::426946630837:role/HorizonProdPromotionSourceRole
+      targetAwsRoleArn: arn:aws:iam::426946630837:role/HorizonProdPromotionTargetRole
+      clusterName: horizon-eks-prod
+      namespaceStrategy: fixed
+      namespaceTemplate: acme-fintech-angular-prod
+      iamValidationMode: validation-only
+      eksAccessMode: namespace-scoped
+      requiresApproval: true
+      isActive: false
+
+components:
+  frontend:
+    enabled: true
+    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/frontend:1.4.20
+  backend:
+    enabled: true
+    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.24
+  jenkins:
+    enabled: true
+    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/jenkins:1.0.8
+    sharedLibrary:
+      source: private-git
+      repository: git@github.com:ankur1825/jenkins-shared-library.git
+      branch: main
+  sonarqube:
+    enabled: true
+    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/sonarqube:10.4-community
+  trivy:
+    enabled: true
+    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/trivy-scanner:1.1.2
+  opa:
+    enabled: true
+    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/opa-scanner:1.0.1
+  openldap:
+    enabled: false
+  keycloak:
+    enabled: true
