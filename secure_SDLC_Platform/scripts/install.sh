@@ -55,7 +55,11 @@ run_state() {
   [[ "${DRY_RUN}" == "true" ]] && { echo "Dry-run: would initialize and plan Terraform state backend resources."; echo "Generated: ${tfvars_file}"; return; }
   terraform -chdir="${ROOT_DIR}/terraform/bootstrap" init
   terraform -chdir="${ROOT_DIR}/terraform/bootstrap" plan -var-file="${tfvars_file}"
-  [[ "${AUTO_APPROVE}" == "true" ]] && terraform -chdir="${ROOT_DIR}/terraform/bootstrap" apply -auto-approve -var-file="${tfvars_file}"
+  if [[ "${AUTO_APPROVE}" == "true" ]]; then
+    terraform -chdir="${ROOT_DIR}/terraform/bootstrap" apply -auto-approve -var-file="${tfvars_file}"
+  else
+    echo "Plan completed. Re-run with --auto-approve to apply state backend resources."
+  fi
 }
 
 run_infra() {
@@ -68,7 +72,11 @@ run_infra() {
   [[ "${DRY_RUN}" == "true" ]] && { echo "Dry-run: would run Terraform init/plan for ${ENVIRONMENT}."; echo "Generated backend config: ${backend_file}"; echo "Generated tfvars: ${tfvars_file}"; return; }
   terraform -chdir="${ROOT_DIR}/terraform/environment" init -reconfigure -backend-config="${backend_file}"
   terraform -chdir="${ROOT_DIR}/terraform/environment" plan -var-file="${tfvars_file}"
-  [[ "${AUTO_APPROVE}" == "true" ]] && terraform -chdir="${ROOT_DIR}/terraform/environment" apply -auto-approve -var-file="${tfvars_file}"
+  if [[ "${AUTO_APPROVE}" == "true" ]]; then
+    terraform -chdir="${ROOT_DIR}/terraform/environment" apply -auto-approve -var-file="${tfvars_file}"
+  else
+    echo "Plan completed. Re-run with --auto-approve to apply ${ENVIRONMENT} infrastructure."
+  fi
 }
 
 run_platform() {

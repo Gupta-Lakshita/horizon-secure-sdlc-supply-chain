@@ -1,6 +1,8 @@
 terraform {
   required_version = ">= 1.3.9"
 
+  backend "s3" {}
+
   required_providers {
     aws = {
       source  = "hashicorp/aws"
@@ -37,6 +39,8 @@ data "aws_caller_identity" "current" {}
 
 locals {
   name_prefix               = "${var.client_id}-${lower(var.environment_name)}"
+  node_group_name           = substr("${local.name_prefix}-ng", 0, 38)
+  node_group_iam_role_name  = substr("${local.name_prefix}-ng-role", 0, 64)
   created_kms_key           = var.create_kms_key ? aws_kms_key.environment[0].arn : ""
   kms_key_arn               = var.existing_kms_key_arn != "" ? var.existing_kms_key_arn : local.created_kms_key
   vpc_id                    = var.create_vpc ? module.vpc[0].vpc_id : var.existing_vpc_id
@@ -240,12 +244,13 @@ module "eks" {
 
   eks_managed_node_groups = var.create_node_group ? {
     default = {
-      name           = "${local.name_prefix}-managed-ng"
-      ami_type       = "AL2023_x86_64_STANDARD"
-      instance_types = var.node_instance_types
-      desired_size   = var.node_desired_size
-      min_size       = var.node_min_size
-      max_size       = var.node_max_size
+      name                     = local.node_group_name
+      iam_role_name            = local.node_group_iam_role_name
+      iam_role_use_name_prefix = false
+      instance_types           = var.node_instance_types
+      desired_size             = var.node_desired_size
+      min_size                 = var.node_min_size
+      max_size                 = var.node_max_size
     }
   } : {}
 
