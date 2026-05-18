@@ -38,10 +38,13 @@ provider "aws" {
 data "aws_caller_identity" "current" {}
 
 locals {
-  name_prefix               = "${var.client_id}-${lower(var.environment_name)}"
-  node_group_name           = substr("${local.name_prefix}-ng", 0, 38)
-  node_group_iam_role_name  = substr("${local.name_prefix}-ng-role", 0, 64)
-  ebs_csi_role_name         = substr("${local.name_prefix}-ebs-csi-role", 0, 64)
+  resource_name_prefix      = var.resource_name_prefix != "" ? var.resource_name_prefix : var.client_id
+  name_prefix               = "${local.resource_name_prefix}-${lower(var.environment_name)}"
+  kms_alias_prefix          = var.kms_alias_prefix != "" ? var.kms_alias_prefix : "horizon/${var.client_id}"
+  deploy_role_name          = var.deploy_role_name != "" ? var.deploy_role_name : substr("${local.name_prefix}-deploy-role", 0, 64)
+  node_group_name           = var.node_group_name != "" ? var.node_group_name : substr("${local.name_prefix}-ng", 0, 38)
+  node_group_iam_role_name  = var.node_group_iam_role_name != "" ? var.node_group_iam_role_name : substr("${local.name_prefix}-ng-role", 0, 64)
+  ebs_csi_role_name         = var.ebs_csi_role_name != "" ? var.ebs_csi_role_name : substr("${local.name_prefix}-ebs-csi-role", 0, 64)
   created_kms_key           = var.create_kms_key ? aws_kms_key.environment[0].arn : ""
   kms_key_arn               = var.existing_kms_key_arn != "" ? var.existing_kms_key_arn : local.created_kms_key
   vpc_id                    = var.create_vpc ? module.vpc[0].vpc_id : var.existing_vpc_id
@@ -65,14 +68,14 @@ data "aws_iam_policy_document" "deploy_assume_role" {
 
 resource "aws_iam_role" "deploy" {
   count              = var.create_deploy_role ? 1 : 0
-  name               = "Horizon${title(lower(var.environment_name))}DeployRole"
+  name               = local.deploy_role_name
   assume_role_policy = data.aws_iam_policy_document.deploy_assume_role[0].json
   tags               = var.tags
 }
 
 resource "aws_iam_role_policy" "deploy" {
   count = var.create_deploy_role ? 1 : 0
-  name  = "Horizon${title(lower(var.environment_name))}DeployPolicy"
+  name  = substr("${local.deploy_role_name}-policy", 0, 128)
   role  = aws_iam_role.deploy[0].id
 
   policy = jsonencode({
@@ -140,7 +143,7 @@ resource "aws_kms_key" "environment" {
 
 resource "aws_kms_alias" "environment" {
   count         = var.create_kms_key ? 1 : 0
-  name          = "alias/horizon/${var.client_id}/${lower(var.environment_name)}"
+  name          = "alias/${local.kms_alias_prefix}/${lower(var.environment_name)}"
   target_key_id = aws_kms_key.environment[0].key_id
 }
 
@@ -372,6 +375,7 @@ resource "null_resource" "application_namespace" {
     namespace_name   = var.namespace_name
     client_id        = var.client_id
     environment_name = lower(var.environment_name)
+    managed_by       = lookup(var.tags, "ManagedBy", "horizon-enterprise-installer")
   }
 
   provisioner "local-exec" {
@@ -381,7 +385,7 @@ resource "null_resource" "application_namespace" {
       aws eks update-kubeconfig --region "${self.triggers.aws_region}" --name "${self.triggers.cluster_name}" >/dev/null
       kubectl create namespace "${self.triggers.namespace_name}" --dry-run=client -o yaml | kubectl apply -f -
       kubectl label namespace "${self.triggers.namespace_name}" \
-        app.kubernetes.io/managed-by=horizon-enterprise-installer \
+        app.kubernetes.io/managed-by="${self.triggers.managed_by}" \
         horizonrelevance.com/client="${self.triggers.client_id}" \
         horizonrelevance.com/env="${self.triggers.environment_name}" \
         --overwrite >/dev/null

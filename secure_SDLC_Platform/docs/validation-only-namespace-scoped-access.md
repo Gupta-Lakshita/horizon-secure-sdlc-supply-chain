@@ -37,6 +37,8 @@ In this model:
 - The target deployment role is mapped into EKS with namespace-scoped access.
 - Developers only select `DEV`, `QA`, `STAGE`, or `PROD` in the UI.
 
+Role names, namespace names, and cluster names are client-owned. The examples use Horizon/Acme-style placeholders, but enterprise clients should replace them with their approved naming standards in the values file.
+
 ## Client Responsibilities
 
 The client cloud/platform team creates:
@@ -54,6 +56,7 @@ The installer:
 
 - Reads `client-values.yaml`.
 - Validates that required roles and clusters exist.
+- Uses `naming.resourceNamePrefix` and explicit per-resource `roleName`/`name` values for any optional resource it provisions.
 - Seeds the Environment Catalog.
 - Enables backend preflight validation.
 - Deploys the platform using Helm.

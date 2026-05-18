@@ -44,6 +44,8 @@ cp secure_SDLC_Platform/examples/client-hybrid-onboarding-values.yaml client-val
 bash secure_SDLC_Platform/scripts/preflight.sh -f client-values.local.yaml --environment QA --dry-run --skip-aws
 ```
 
+Before using the copied file for a new client, update `client.id`, `installer.releaseName`, `installer.namespace`, and the top-level `naming` block. The installer is not tied to Acme or Horizon demo names; client-owned names are supplied through the values file and explicit role/cluster/namespace fields.
+
 Provision or validate in this order:
 
 ```bash
@@ -55,6 +57,9 @@ bash secure_SDLC_Platform/scripts/install.sh --phase infra -f client-values.loca
 
 # Render/install the Horizon platform Helm chart
 bash secure_SDLC_Platform/scripts/install.sh --phase platform -f client-values.local.yaml --dry-run
+
+# Publish the resolved environment to the backend Environment Catalog
+bash secure_SDLC_Platform/scripts/install.sh --phase catalog -f client-values.local.yaml --environment QA --dry-run
 ```
 
 Validate:

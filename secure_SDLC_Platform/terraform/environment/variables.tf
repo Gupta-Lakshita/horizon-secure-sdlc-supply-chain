@@ -8,6 +8,42 @@ variable "client_id" {
   type        = string
 }
 
+variable "resource_name_prefix" {
+  description = "Client-approved resource naming prefix. Defaults to client_id when empty."
+  type        = string
+  default     = ""
+}
+
+variable "kms_alias_prefix" {
+  description = "KMS alias prefix without the leading alias/. Defaults to horizon/<client_id> when empty."
+  type        = string
+  default     = ""
+}
+
+variable "deploy_role_name" {
+  description = "Optional explicit IAM role name when the installer provisions an environment deploy role."
+  type        = string
+  default     = ""
+}
+
+variable "node_group_name" {
+  description = "Optional explicit EKS managed node group name."
+  type        = string
+  default     = ""
+}
+
+variable "node_group_iam_role_name" {
+  description = "Optional explicit EKS managed node group IAM role name."
+  type        = string
+  default     = ""
+}
+
+variable "ebs_csi_role_name" {
+  description = "Optional explicit IAM role name for the AWS EBS CSI driver IRSA role."
+  type        = string
+  default     = ""
+}
+
 variable "aws_region" {
   description = "AWS region."
   type        = string

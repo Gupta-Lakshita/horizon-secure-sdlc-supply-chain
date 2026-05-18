@@ -4,12 +4,14 @@
 
 1. [Purpose](#purpose)
 2. [Desired-State Model](#desired-state-model)
-3. [Supported Client Scenarios](#supported-client-scenarios)
-4. [Terraform Remote State](#terraform-remote-state)
-5. [Lifecycle Commands](#lifecycle-commands)
-6. [Provisioning Rules](#provisioning-rules)
-7. [Destroy Rules](#destroy-rules)
-8. [QA Example](#qa-example)
+3. [Naming And Resource Ownership](#naming-and-resource-ownership)
+4. [Supported Client Scenarios](#supported-client-scenarios)
+5. [Terraform Remote State](#terraform-remote-state)
+6. [Lifecycle Commands](#lifecycle-commands)
+7. [Catalog Sync](#catalog-sync)
+8. [Provisioning Rules](#provisioning-rules)
+9. [Destroy Rules](#destroy-rules)
+10. [QA Example](#qa-example)
 
 ## Purpose
 
@@ -53,6 +55,50 @@ accessModel:
 ```
 
 This means IAM roles are normally client-created, and the installer validates them.
+
+## Naming And Resource Ownership
+
+The installer is intentionally generic. A client can use their own names for AWS accounts, roles, clusters, namespaces, buckets, repositories, DNS zones, and Terraform state keys.
+
+The platform installation name is controlled here:
+
+```yaml
+installer:
+  releaseName: client-devsecops-platform
+  namespace: client-platform-namespace
+```
+
+Those fields are not fixed Horizon namespaces. They should be changed to the client's approved Kubernetes release and namespace names before platform installation.
+
+Installer-created AWS resources use the top-level naming contract:
+
+```yaml
+naming:
+  resourceNamePrefix: client-approved-prefix
+  managedBy: horizon-enterprise-installer
+  kmsAliasPrefix: platform/client-approved-prefix
+```
+
+If a client has exact-name standards, use explicit per-resource overrides such as:
+
+```yaml
+environments:
+  - name: QA
+    iam:
+      deployRole:
+        state: provision
+        roleName: client-qa-devsecops-deploy
+    eks:
+      ebsCsiDriver:
+        state: provision
+        roleName: client-qa-ebs-csi-irsa
+      nodeGroup:
+        state: provision
+        name: client-qa-apps-ng
+        roleName: client-qa-apps-ng-role
+```
+
+The Acme file is an internal demo of one client naming convention. New trials should copy the generic hybrid file and replace `client.id`, `naming`, role ARNs, cluster names, namespaces, DNS, buckets, and repositories with the client's values.
 
 ## Supported Client Scenarios
 
@@ -230,6 +276,29 @@ bash secure_SDLC_Platform/scripts/install.sh \
   --phase platform \
   -f secure_SDLC_Platform/examples/client-hybrid-onboarding-values.yaml
 ```
+
+### Catalog Sync
+
+The infrastructure phase provisions or validates AWS and Kubernetes resources. It does not update the running Horizon backend by itself. After an environment is provisioned, publish the resolved environment mapping to the product through the backend Environment Catalog API:
+
+```bash
+bash secure_SDLC_Platform/scripts/install.sh \
+  --phase catalog \
+  --environment QA \
+  -f secure_SDLC_Platform/examples/client-hybrid-onboarding-values.yaml
+```
+
+Dry-run mode renders the exact payload that would be sent:
+
+```bash
+bash secure_SDLC_Platform/scripts/install.sh \
+  --phase catalog \
+  --environment QA \
+  -f secure_SDLC_Platform/examples/client-hybrid-onboarding-values.yaml \
+  --dry-run
+```
+
+The catalog phase uses Terraform outputs when available, then falls back to the values file. It posts to `<frontendHost><backendPath>/environment-catalog` unless `catalogSync.backendUrl`, `installer.backendUrl`, or `domain.platformHosts.backendUrl` is configured. Set `CATALOG_SYNC_TOKEN` when the backend requires a bearer token. Set `CATALOG_SYNC_INSECURE=true` only for internal demos that use a temporary or self-signed TLS certificate.
 
 ### Validate
 

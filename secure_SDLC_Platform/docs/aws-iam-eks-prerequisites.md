@@ -40,6 +40,8 @@ At minimum, a client-hosted installation needs these roles.
 
 Small demos may use one non-prod deploy role, but enterprise clients should separate DEV, QA, STAGE, and PROD roles.
 
+The role names above are examples. Enterprise clients can use names such as `regeneron-qa-devsecops-deploy`, `platform-jenkins-runtime`, or any other approved convention. The installer reads existing role names from `roleArn`; when it provisions optional roles, it uses `naming.resourceNamePrefix` and explicit fields such as `iam.deployRole.roleName`, `eks.ebsCsiDriver.roleName`, and `eks.nodeGroup.roleName`.
+
 ## Jenkins Runtime Role
 
 The Jenkins runtime role is assumed by the Kubernetes service account using IRSA.
@@ -242,6 +244,10 @@ Supported values:
 - `API_AND_CONFIG_MAP`
 
 If the cluster still uses only the legacy `CONFIG_MAP` mode, the client platform team should plan migration to access entries before enabling enterprise namespace-scoped mode.
+
+When `eks.accessEntry.state=provision`, the installer updates a newly provisioned cluster from `CONFIG_MAP` to `API_AND_CONFIG_MAP` before creating the access entry. For an existing production cluster, clients may choose to perform this migration themselves through their standard change process and then run installer preflight again.
+
+When `eks.ebsCsiDriver.state=provision` for a provisioned cluster, the installer creates an EBS CSI IRSA role and attaches `arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy`. Use `eks.ebsCsiDriver.roleName` if the client requires a specific role name.
 
 Create or confirm the access entry:
 
@@ -502,4 +508,3 @@ aws eks list-associated-access-policies \
 | ECR repositories or repository prefixes | Yes | Yes |
 | Environment Catalog values | Yes, with Horizon support | Yes |
 | Jenkins backend API token secret | Client platform admin | Yes |
-

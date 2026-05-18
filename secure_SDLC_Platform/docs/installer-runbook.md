@@ -10,16 +10,17 @@
 6. [Client Values File](#client-values-file)
 7. [Environment Catalog and Role Mapping](#environment-catalog-and-role-mapping)
 8. [Preflight Validation](#preflight-validation)
-9. [Mode 1: Full Platform Provisioning](#mode-1-full-platform-provisioning)
-10. [Mode 2: Bring Your Own Infrastructure](#mode-2-bring-your-own-infrastructure)
-11. [Mode 3: Hybrid Desired-State Provisioning](#mode-3-hybrid-desired-state-provisioning)
-12. [Terraform Remote State](#terraform-remote-state)
-13. [Destroy Workflow](#destroy-workflow)
-14. [Online License Sync](#online-license-sync)
-15. [Identity Configuration](#identity-configuration)
-16. [Validation](#validation)
-17. [Upgrade and Renewal](#upgrade-and-renewal)
-18. [Troubleshooting](#troubleshooting)
+9. [Catalog Sync](#catalog-sync)
+10. [Mode 1: Full Platform Provisioning](#mode-1-full-platform-provisioning)
+11. [Mode 2: Bring Your Own Infrastructure](#mode-2-bring-your-own-infrastructure)
+12. [Mode 3: Hybrid Desired-State Provisioning](#mode-3-hybrid-desired-state-provisioning)
+13. [Terraform Remote State](#terraform-remote-state)
+14. [Destroy Workflow](#destroy-workflow)
+15. [Online License Sync](#online-license-sync)
+16. [Identity Configuration](#identity-configuration)
+17. [Validation](#validation)
+18. [Upgrade and Renewal](#upgrade-and-renewal)
+19. [Troubleshooting](#troubleshooting)
 
 ## Purpose
 
@@ -167,7 +168,7 @@ The Environment Catalog is the runtime source of truth for DEV, QA, STAGE, and P
 Expected flow:
 
 1. Client platform/admin team fills `environments` in `client-values.yaml`; in legacy/BYO mode they may fill `environmentCatalog.environments` directly.
-2. Installer writes or generates the runtime catalog into the platform config.
+2. Installer generates the runtime catalog payload from values and Terraform outputs.
 3. Backend serves active environments to the UI.
 4. Developer selects only `Target Environment`.
 5. Backend resolves ECR, S3, IAM role, EKS cluster, namespace strategy, and notification values before triggering Jenkins.
@@ -213,6 +214,31 @@ Preflight checks:
 5. License sync endpoint is configured for online sync.
 6. Identity mode is valid.
 
+## Catalog Sync
+
+Infrastructure provisioning and catalog publication are separate steps. The infrastructure phase creates or validates AWS and Kubernetes resources. The catalog phase publishes the selected environment to the running Horizon backend so the UI and pipeline API can resolve it server-side.
+
+Dry-run the payload:
+
+```bash
+bash secure_SDLC_Platform/scripts/install.sh \
+  --phase catalog \
+  --environment QA \
+  -f client-values.local.yaml \
+  --dry-run
+```
+
+Publish to the backend:
+
+```bash
+bash secure_SDLC_Platform/scripts/install.sh \
+  --phase catalog \
+  --environment QA \
+  -f client-values.local.yaml
+```
+
+By default, the endpoint is derived from `domain.platformHosts.frontendHost` and `domain.platformHosts.backendPath`, for example `https://horizonrelevance.com/pipeline/api/environment-catalog`. For a private endpoint, set `catalogSync.backendUrl`, `installer.backendUrl`, or `domain.platformHosts.backendUrl` in the values file. Use `CATALOG_SYNC_TOKEN` when the backend requires bearer-token automation access.
+
 ## Mode 1: Full Platform Provisioning
 
 Use this when the client only has AWS accounts and DNS.
@@ -241,7 +267,13 @@ bash secure_SDLC_Platform/scripts/install.sh --phase infra -f regeneron-trial.lo
 bash secure_SDLC_Platform/scripts/install.sh --phase platform -f regeneron-trial.local.yaml
 ```
 
-5. Validate.
+5. Publish Environment Catalog.
+
+```bash
+bash secure_SDLC_Platform/scripts/install.sh --phase catalog --environment QA -f regeneron-trial.local.yaml
+```
+
+6. Validate.
 
 ```bash
 bash secure_SDLC_Platform/scripts/validate.sh -f regeneron-trial.local.yaml
@@ -269,6 +301,12 @@ bash secure_SDLC_Platform/scripts/preflight.sh -f client-values.local.yaml
 
 ```bash
 bash secure_SDLC_Platform/scripts/install.sh --phase platform -f client-values.local.yaml
+```
+
+5. Publish the existing environment mappings to the backend.
+
+```bash
+bash secure_SDLC_Platform/scripts/install.sh --phase catalog --environment QA -f client-values.local.yaml
 ```
 
 ## Mode 3: Hybrid Desired-State Provisioning
@@ -324,6 +362,15 @@ bash secure_SDLC_Platform/scripts/install.sh \
   -f client-values.local.yaml \
   --environment QA \
   --auto-approve
+```
+
+Publish QA into the product Environment Catalog:
+
+```bash
+bash secure_SDLC_Platform/scripts/install.sh \
+  --phase catalog \
+  -f client-values.local.yaml \
+  --environment QA
 ```
 
 ## Terraform Remote State
@@ -517,5 +564,5 @@ Offline fallback:
 | Frontend loads but backend fails | Ingress path or backend URL mismatch. | Validate `domain.backendPath` and ingress rules. |
 | LDAP login fails | Bind DN, base DN, TLS, or group filter mismatch. | Test LDAP bind from Keycloak pod. |
 | User can log in but sees wrong menus | LDAP/AD group did not map to a product role. | Check `LDAP_ROLE_GROUP_MAPPINGS`, group DNs/CNs, and backend `/me` response. |
-| Developer form still needs AWS fields | Environment Catalog was not seeded or frontend is using an older release. | Validate `ENVIRONMENT_CATALOG_JSON`, backend `/environment-catalog`, and frontend `1.4.19` or newer. |
+| Developer form still needs AWS fields | Environment Catalog was not synced to the backend or frontend is using an older release. | Run `install.sh --phase catalog --environment <ENV>`, validate backend `/environment-catalog`, and confirm frontend `1.4.19` or newer. |
 | ECR push fails | Missing auth, wrong account ID, or repository does not exist. | Validate `aws ecr get-login-password` and repository mapping. |

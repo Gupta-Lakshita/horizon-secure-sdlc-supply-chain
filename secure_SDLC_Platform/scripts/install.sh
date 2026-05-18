@@ -12,7 +12,7 @@ HELPER="${SCRIPT_DIR}/values-helper.rb"
 GENERATED_DIR="${ROOT_DIR}/.generated"
 
 usage() {
-  echo "Usage: $0 --phase <state|infra|platform|all> -f <client-values.yaml> [--environment ENV] [--dry-run] [--auto-approve]"
+  echo "Usage: $0 --phase <state|infra|platform|catalog|all> -f <client-values.yaml> [--environment ENV] [--dry-run] [--auto-approve]"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -96,10 +96,98 @@ run_platform() {
   helm upgrade --install "${release}" "${ROOT_DIR}/helm/horizon-platform" --namespace "${namespace}" --values "${VALUES_FILE}"
 }
 
+catalog_backend_base_url() {
+  local explicit host path scheme url
+  explicit="$(ruby "${HELPER}" get --file "${VALUES_FILE}" --path catalogSync.backendUrl)"
+  [[ -z "${explicit}" ]] && explicit="$(ruby "${HELPER}" get --file "${VALUES_FILE}" --path installer.backendUrl)"
+  [[ -z "${explicit}" ]] && explicit="$(ruby "${HELPER}" get --file "${VALUES_FILE}" --path domain.platformHosts.backendUrl)"
+  if [[ -n "${explicit}" ]]; then
+    echo "${explicit%/}"
+    return
+  fi
+
+  host="$(ruby "${HELPER}" get --file "${VALUES_FILE}" --path domain.platformHosts.frontendHost)"
+  path="$(ruby "${HELPER}" get --file "${VALUES_FILE}" --path domain.platformHosts.backendPath)"
+  scheme="$(ruby "${HELPER}" get --file "${VALUES_FILE}" --path domain.platformHosts.scheme)"
+  [[ -z "${scheme}" ]] && scheme="$(ruby "${HELPER}" get --file "${VALUES_FILE}" --path domain.scheme)"
+  [[ -z "${scheme}" ]] && scheme="https"
+  [[ -z "${path}" ]] && path="/pipeline/api"
+  [[ "${path}" != /* ]] && path="/${path}"
+
+  if [[ -z "${host}" ]]; then
+    url="http://localhost:8000"
+  elif [[ "${host}" =~ ^https?:// ]]; then
+    url="${host}${path}"
+  else
+    url="${scheme}://${host}${path}"
+  fi
+  echo "${url%/}"
+}
+
+write_catalog_payload() {
+  local env_lc payload_file output_file terraform_output_file files backend_file
+  env_lc="all"
+  [[ -n "${ENVIRONMENT}" ]] && env_lc="$(echo "${ENVIRONMENT}" | tr '[:upper:]' '[:lower:]')"
+  payload_file="${GENERATED_DIR}/catalog-${env_lc}.json"
+  terraform_output_file=""
+
+  if [[ -n "${ENVIRONMENT}" && "${DRY_RUN}" != "true" ]]; then
+    files="$(write_env_files)"
+    backend_file="${files%%|*}"
+    output_file="${GENERATED_DIR}/terraform-output-${env_lc}.json"
+    if terraform -chdir="${ROOT_DIR}/terraform/environment" init -reconfigure -backend-config="${backend_file}" >/dev/null 2>&1 &&
+       terraform -chdir="${ROOT_DIR}/terraform/environment" output -json > "${output_file}" 2>/dev/null; then
+      terraform_output_file="${output_file}"
+      echo "Terraform outputs loaded: ${output_file}" >&2
+    else
+      echo "Warning: Terraform outputs are unavailable; catalog sync will use values file data." >&2
+    fi
+  fi
+
+  if [[ -n "${ENVIRONMENT}" ]]; then
+    if [[ -n "${terraform_output_file}" ]]; then
+      ruby "${HELPER}" catalog-payload --file "${VALUES_FILE}" --environment "${ENVIRONMENT}" --terraform-output "${terraform_output_file}" > "${payload_file}"
+    else
+      ruby "${HELPER}" catalog-payload --file "${VALUES_FILE}" --environment "${ENVIRONMENT}" > "${payload_file}"
+    fi
+  else
+    ruby "${HELPER}" catalog-payload --file "${VALUES_FILE}" > "${payload_file}"
+  fi
+  echo "${payload_file}"
+}
+
+run_catalog() {
+  echo "== Environment Catalog sync phase =="
+  command -v curl >/dev/null || { echo "Missing required command: curl" >&2; exit 1; }
+  local payload_file base_url endpoint curl_args
+  payload_file="$(write_catalog_payload)"
+  base_url="$(catalog_backend_base_url)"
+  if [[ "${base_url}" == */environment-catalog ]]; then
+    endpoint="${base_url}"
+  else
+    endpoint="${base_url%/}/environment-catalog"
+  fi
+
+  if [[ "${DRY_RUN}" == "true" ]]; then
+    echo "Dry-run: would upsert Environment Catalog via ${endpoint}"
+    echo "Generated payload: ${payload_file}"
+    cat "${payload_file}"
+    return
+  fi
+
+  curl_args=(--fail --show-error --silent -X POST "${endpoint}" -H "Content-Type: application/json" --data-binary "@${payload_file}")
+  [[ -n "${CATALOG_SYNC_TOKEN:-}" ]] && curl_args+=(-H "Authorization: Bearer ${CATALOG_SYNC_TOKEN}")
+  [[ "${CATALOG_SYNC_INSECURE:-false}" == "true" ]] && curl_args+=(--insecure)
+  curl "${curl_args[@]}"
+  echo
+  echo "Environment Catalog synced through ${endpoint}"
+}
+
 case "${PHASE}" in
   state) run_state ;;
   infra) run_infra ;;
   platform) run_platform ;;
-  all) run_state; run_infra; run_platform ;;
+  catalog) run_catalog ;;
+  all) run_state; run_infra; run_platform; run_catalog ;;
   *) usage; exit 1 ;;
 esac

@@ -15,6 +15,7 @@ def usage!
       values-helper.rb tfvars --file <values.yaml> --environment QA
       values-helper.rb state-tfvars --file <values.yaml>
       values-helper.rb backend-config --file <values.yaml> --scope <platform|environment> [--environment QA]
+      values-helper.rb catalog-payload --file <values.yaml> [--environment QA] [--terraform-output outputs.json]
       values-helper.rb get --file <values.yaml> --path installer.namespace
   USAGE
   exit 1
@@ -28,6 +29,7 @@ def parse_args(argv)
     when "--environment", "-e" then args[:environment] = argv.shift&.upcase
     when "--path" then args[:path] = argv.shift
     when "--scope" then args[:scope] = argv.shift
+    when "--terraform-output" then args[:terraform_output] = argv.shift
     else
       warn "Unknown argument: #{key}"
       usage!
@@ -53,6 +55,20 @@ def dig_path(obj, path)
       nil
     end
   end
+end
+
+def blank?(value)
+  value.nil? || (value.respond_to?(:empty?) && value.empty?)
+end
+
+def first_present(*values)
+  values.find { |value| !blank?(value) }
+end
+
+def key_value(hash, *keys)
+  return nil unless hash.is_a?(Hash)
+  keys.each { |key| return hash[key] if hash.key?(key) }
+  nil
 end
 
 def environments(values)
@@ -85,6 +101,20 @@ def role_name(role_arn)
   role_arn.to_s.split("/").last
 end
 
+def managed_by(values)
+  dig_path(values, "naming.managedBy") || "horizon-enterprise-installer"
+end
+
+def resource_name_prefix(values)
+  dig_path(values, "naming.resourceNamePrefix") ||
+    dig_path(values, "naming.resourcePrefix") ||
+    dig_path(values, "client.id")
+end
+
+def kms_alias_prefix(values)
+  dig_path(values, "naming.kmsAliasPrefix") || "horizon/#{dig_path(values, "client.id")}"
+end
+
 def walk_resources(object, prefix = [], &block)
   return unless object.is_a?(Hash)
   yield prefix.join("."), object if object.key?("state")
@@ -98,6 +128,8 @@ def validate_values(values, env_name = nil)
   errors = []
   %w[installer client license accessModel].each { |key| errors << "Missing top-level key: #{key}" unless values[key].is_a?(Hash) }
   errors << "Missing top-level environments list" unless environments(values).any?
+  errors << "Missing client.id or naming.resourceNamePrefix" if resource_name_prefix(values).to_s.empty?
+  errors << "naming.kmsAliasPrefix must not include the leading alias/" if kms_alias_prefix(values).to_s.start_with?("alias/")
   names = environments(values).map { |env| env["name"].to_s.upcase }
   errors << "Requested environment is not defined: #{env_name}" if env_name && !names.include?(env_name.upcase)
 
@@ -210,12 +242,16 @@ end
 
 def tfvars(values, env_name)
   env = env_or_exit(values, env_name)
+  node_group = dig_path(env, "eks.nodeGroup") || {}
+  ebs_csi_driver = dig_path(env, "eks.ebsCsiDriver") || {}
   result = {
     environment_name: env["name"],
     client_id: dig_path(values, "client.id"),
+    resource_name_prefix: resource_name_prefix(values),
+    kms_alias_prefix: kms_alias_prefix(values),
     aws_region: dig_path(env, "aws.region"),
     aws_account_id: dig_path(env, "aws.accountId"),
-    tags: { Client: dig_path(values, "client.id"), Environment: env["name"], ManagedBy: "horizon-enterprise-installer" },
+    tags: { Client: dig_path(values, "client.id"), Environment: env["name"], ManagedBy: managed_by(values) },
     create_vpc: state_of(dig_path(env, "foundation.vpc")) == "provision",
     existing_vpc_id: dig_path(env, "foundation.vpc.vpcId"),
     existing_subnet_ids: dig_path(env, "foundation.vpc.subnetIds") || [],
@@ -238,16 +274,20 @@ def tfvars(values, env_name)
     create_ebs_csi_driver: state_of(dig_path(env, "eks.ebsCsiDriver")) == "provision",
     create_ingress_controller: state_of(dig_path(env, "eks.ingressController")) == "provision",
     create_node_group: state_of(dig_path(env, "eks.nodeGroup")) == "provision",
+    node_group_name: node_group["name"] || "",
+    node_group_iam_role_name: node_group["roleName"] || node_group["iamRoleName"] || "",
     node_instance_types: dig_path(env, "eks.nodeGroup.instanceTypes") || ["t3.small"],
     node_desired_size: dig_path(env, "eks.nodeGroup.desiredSize") || 1,
     node_min_size: dig_path(env, "eks.nodeGroup.minSize") || 1,
     node_max_size: dig_path(env, "eks.nodeGroup.maxSize") || 2,
+    ebs_csi_role_name: ebs_csi_driver["roleName"] || ebs_csi_driver["iamRoleName"] || "",
     create_namespace: state_of(dig_path(env, "eks.namespace")) == "provision",
     namespace_name: dig_path(env, "eks.namespace.template"),
     create_eks_access_entry: state_of(dig_path(env, "eks.accessEntry")) == "provision",
     eks_access_policy_arn: dig_path(env, "eks.accessEntry.policyArn"),
     eks_access_scope_type: dig_path(env, "eks.accessEntry.scopeType") || "namespace",
     deploy_role_arn: dig_path(env, "iam.deployRole.roleArn"),
+    deploy_role_name: dig_path(env, "iam.deployRole.roleName") || "",
     jenkins_runtime_role_arn: dig_path(values, "accessModel.jenkins.runtimeRole.roleArn"),
     create_deploy_role: state_of(dig_path(env, "iam.deployRole")) == "provision",
     deletion_protection: dig_path(values, "lifecycle.deletionProtection") != false
@@ -264,8 +304,116 @@ def state_tfvars(values)
     state_lock_table_name: tfstate["lockTable"],
     state_kms_key_arn: tfstate["kmsKeyArn"],
     state_key_prefix: tfstate["keyPrefix"],
-    tags: { Client: dig_path(values, "client.id"), ManagedBy: "horizon-enterprise-installer", Purpose: "terraform-state" }
+    tags: { Client: dig_path(values, "client.id"), ManagedBy: managed_by(values), Purpose: "terraform-state" }
   })
+end
+
+def load_terraform_outputs(path)
+  return {} if path.to_s.empty? || !File.file?(path)
+  JSON.parse(File.read(path))
+rescue JSON::ParserError => e
+  warn "Terraform output JSON parse failed: #{e.message}"
+  {}
+end
+
+def terraform_output(outputs, key)
+  value = outputs[key.to_s]
+  value.is_a?(Hash) ? value["value"] : nil
+end
+
+def enabled_environment?(env)
+  env.fetch("enabled", true).to_s != "false"
+end
+
+def ecr_registry_from(account_id, region)
+  return nil if blank?(account_id) || blank?(region)
+  "#{account_id}.dkr.ecr.#{region}.amazonaws.com"
+end
+
+def catalog_entry_from_environment(values, env, terraform_outputs = {})
+  app_ecr = dig_path(env, "foundation.applicationEcr") || {}
+  artifact = dig_path(env, "foundation.artifactBucket") || {}
+  deploy_role = dig_path(env, "iam.deployRole") || {}
+  source_role = dig_path(env, "iam.sourceRole") || {}
+  target_role = dig_path(env, "iam.targetRole") || {}
+  eks = env["eks"] || {}
+  namespace = dig_path(env, "eks.namespace") || {}
+  runtime = env["runtime"] || {}
+  aws = env["aws"] || {}
+
+  account_id = first_present(terraform_output(terraform_outputs, "aws_account_id"), aws["accountId"])
+  region = first_present(aws["region"], dig_path(values, "platform.region"))
+  deploy_role_arn = first_present(terraform_output(terraform_outputs, "deploy_role_arn"), deploy_role["roleArn"])
+  repository_name = first_present(
+    terraform_output(terraform_outputs, "ecr_repository_name"),
+    app_ecr["repositoryTemplate"],
+    app_ecr["repositoryName"]
+  )
+
+  {
+    name: first_present(terraform_output(terraform_outputs, "environment_name"), env["name"]).to_s.upcase,
+    display_name: first_present(env["displayName"], env["name"]),
+    account_tier: first_present(env["accountTier"], "nonprod"),
+    aws_account_id: account_id,
+    aws_region: region,
+    ecr_registry: first_present(app_ecr["registry"], ecr_registry_from(account_id, region)),
+    ecr_repository_template: repository_name,
+    artifact_bucket: first_present(terraform_output(terraform_outputs, "artifact_bucket_name"), artifact["name"]),
+    client_aws_role_arn: deploy_role_arn,
+    nonprod_aws_role_arn: deploy_role_arn,
+    source_aws_role_arn: first_present(source_role["roleArn"], ""),
+    target_aws_role_arn: first_present(target_role["roleArn"], ""),
+    cluster_name: first_present(terraform_output(terraform_outputs, "eks_cluster_name"), eks["clusterName"]),
+    namespace_strategy: first_present(namespace["strategy"], "per-app"),
+    namespace_template: first_present(terraform_output(terraform_outputs, "namespace_name"), namespace["template"]),
+    sns_topic_arn: first_present(dig_path(runtime, "snsTopicArn"), dig_path(values, "sharedServices.notifications.topicArn"), ""),
+    is_active: runtime.key?("isDeployable") ? runtime["isDeployable"] != false : true
+  }
+end
+
+def catalog_entry_from_explicit(entry)
+  active = key_value(entry, "is_active", "isActive")
+  {
+    name: key_value(entry, "name").to_s.upcase,
+    display_name: first_present(key_value(entry, "display_name", "displayName"), key_value(entry, "name")),
+    account_tier: first_present(key_value(entry, "account_tier", "accountTier"), "nonprod"),
+    aws_account_id: key_value(entry, "aws_account_id", "awsAccountId"),
+    aws_region: key_value(entry, "aws_region", "awsRegion"),
+    ecr_registry: key_value(entry, "ecr_registry", "ecrRegistry"),
+    ecr_repository_template: key_value(entry, "ecr_repository_template", "ecrRepositoryTemplate"),
+    artifact_bucket: key_value(entry, "artifact_bucket", "artifactBucket"),
+    client_aws_role_arn: key_value(entry, "client_aws_role_arn", "clientAwsRoleArn"),
+    nonprod_aws_role_arn: key_value(entry, "nonprod_aws_role_arn", "nonprodAwsRoleArn"),
+    source_aws_role_arn: first_present(key_value(entry, "source_aws_role_arn", "sourceAwsRoleArn"), ""),
+    target_aws_role_arn: first_present(key_value(entry, "target_aws_role_arn", "targetAwsRoleArn"), ""),
+    cluster_name: key_value(entry, "cluster_name", "clusterName"),
+    namespace_strategy: first_present(key_value(entry, "namespace_strategy", "namespaceStrategy"), "per-app"),
+    namespace_template: key_value(entry, "namespace_template", "namespaceTemplate"),
+    sns_topic_arn: first_present(key_value(entry, "sns_topic_arn", "snsTopicArn"), ""),
+    is_active: active.nil? ? true : active != false
+  }
+end
+
+def normalize_catalog_entry(entry)
+  entry.transform_values { |value| value.nil? ? "" : value }
+end
+
+def catalog_payload(values, env_name = nil, terraform_outputs = {})
+  source = dig_path(values, "environmentCatalog.source").to_s
+  generated_source = source == "generated-from-environments" ||
+                     (source.empty? && values["environments"].is_a?(Array) && values["environments"].any?)
+
+  entries = if generated_source
+              envs = env_name ? [env_or_exit(values, env_name)] : environments(values)
+              envs.select { |env| enabled_environment?(env) }
+                  .map { |env| catalog_entry_from_environment(values, env, env_name ? terraform_outputs : {}) }
+            else
+              explicit = dig_path(values, "environmentCatalog.environments") || []
+              explicit.map { |entry| catalog_entry_from_explicit(entry) }
+            end
+
+  entries = entries.select { |entry| entry[:name].to_s.upcase == env_name.to_s.upcase } if env_name
+  puts JSON.pretty_generate({ environments: entries.map { |entry| normalize_catalog_entry(entry) } })
 end
 
 args = parse_args(ARGV)
@@ -280,6 +428,7 @@ when "destroy-items" then validate_values(values, args[:environment]); provision
 when "tfvars" then validate_values(values, args[:environment]); tfvars(values, args[:environment] || (warn("--environment is required for tfvars") && exit(1)))
 when "state-tfvars" then validate_values(values, args[:environment]); state_tfvars(values)
 when "backend-config" then validate_values(values, args[:environment]); backend_config(values, args[:scope], args[:environment])
+when "catalog-payload" then validate_values(values, args[:environment]); catalog_payload(values, args[:environment], load_terraform_outputs(args[:terraform_output]))
 when "get"
   value = dig_path(values, args[:path])
   puts(value.is_a?(Hash) || value.is_a?(Array) ? JSON.pretty_generate(value) : value) unless value.nil?

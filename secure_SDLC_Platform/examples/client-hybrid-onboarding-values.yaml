@@ -1,7 +1,18 @@
+# Generic hybrid onboarding template.
+# The Acme Fintech values below are runnable demo placeholders. For a real
+# client, copy this file into the client-owned repo and replace every client,
+# AWS, DNS, IAM, EKS, namespace, bucket, repository, and naming value.
 installer:
   mode: hybrid
   releaseName: horizon-ai-devsecops
   namespace: horizon-platform
+
+naming:
+  # Client-approved prefix for installer-created AWS resources. Change this to
+  # match the client's platform naming standard before running provisioning.
+  resourceNamePrefix: acme-fintech
+  managedBy: horizon-enterprise-installer
+  kmsAliasPrefix: horizon/acme-fintech
 
 terraformState:
   state: existing

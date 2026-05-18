@@ -5,13 +5,14 @@
 1. [Purpose](#purpose)
 2. [Ownership Model](#ownership-model)
 3. [Top-Level Structure](#top-level-structure)
-4. [Desired-State Resource Lifecycle](#desired-state-resource-lifecycle)
-5. [Environment Catalog](#environment-catalog)
-6. [Generic Role Mapping](#generic-role-mapping)
-7. [Product Images](#product-images)
-8. [Runtime Resolution Flow](#runtime-resolution-flow)
-9. [Recommended File Layout](#recommended-file-layout)
-10. [Validation Checklist](#validation-checklist)
+4. [Naming Contract](#naming-contract)
+5. [Desired-State Resource Lifecycle](#desired-state-resource-lifecycle)
+6. [Environment Catalog](#environment-catalog)
+7. [Generic Role Mapping](#generic-role-mapping)
+8. [Product Images](#product-images)
+9. [Runtime Resolution Flow](#runtime-resolution-flow)
+10. [Recommended File Layout](#recommended-file-layout)
+11. [Validation Checklist](#validation-checklist)
 
 ## Purpose
 
@@ -29,6 +30,7 @@ Do not commit real secrets, activation tokens, bind passwords, private keys, or 
 
 ```yaml
 installer: {}
+naming: {}
 client: {}
 domain: {}
 terraformState: {}
@@ -46,6 +48,7 @@ components: {}
 | Section | Owner | Purpose |
 | --- | --- | --- |
 | `installer` | Client platform team with Horizon support | Selects `full-provision`, `partial-provision`, `byo-infra`, `validate-only`, or `hybrid`, release name, and platform namespace. |
+| `naming` | Client platform/cloud standards team | Defines the client-approved prefix, managed-by tag value, and KMS alias namespace for installer-created resources. |
 | `client` | Client/Horizon onboarding | Defines client ID, display name, industry, and data boundary. |
 | `domain` | Client DNS/platform team | Defines frontend, backend, Jenkins, Keycloak, and SonarQube hosts. |
 | `terraformState` | Client cloud/platform team | Defines the client-owned S3 backend bucket, state key prefix, lock table, and optional state KMS key. |
@@ -60,6 +63,46 @@ components: {}
 | `components` | Horizon release + client platform team | Selects product image tags and optional services. |
 
 Use `secure_SDLC_Platform/examples/client-hybrid-onboarding-values.yaml` as the preferred enterprise starting point. It supports clients that have only AWS accounts and DNS, clients that already have some platform services, and clients that need only selected environments such as QA/STAGE provisioned.
+
+## Naming Contract
+
+Every enterprise client can keep its own naming convention. The installer does not require roles, clusters, namespaces, buckets, or repositories to start with `horizon` or `acme`. The Acme names in the examples are demo values only.
+
+Top-level naming defaults:
+
+```yaml
+naming:
+  resourceNamePrefix: client-approved-prefix
+  managedBy: horizon-enterprise-installer
+  kmsAliasPrefix: platform/client-approved-prefix
+```
+
+| Field | Default | Used For |
+| --- | --- | --- |
+| `naming.resourceNamePrefix` | `client.id` | VPC names, provisioned deploy role names, node group names, EBS CSI role names, and other installer-created AWS names. |
+| `naming.managedBy` | `horizon-enterprise-installer` | AWS tags and generated Terraform state tags. |
+| `naming.kmsAliasPrefix` | `horizon/<client.id>` | KMS aliases created by the environment Terraform module. Do not include the leading `alias/`. |
+
+Optional explicit overrides are available when the client requires exact names:
+
+```yaml
+environments:
+  - name: QA
+    iam:
+      deployRole:
+        state: provision
+        roleName: client-qa-devsecops-deploy
+    eks:
+      ebsCsiDriver:
+        state: provision
+        roleName: client-qa-ebs-csi-irsa
+      nodeGroup:
+        state: provision
+        name: client-qa-apps-ng
+        roleName: client-qa-apps-ng-role
+```
+
+For `state: existing` resources, the client-owned name is supplied through `roleArn`, `clusterName`, `repositoryName`, `bucket`, `namespace.template`, or the matching field for that resource. The installer validates those values without renaming them.
 
 ## Desired-State Resource Lifecycle
 
@@ -108,6 +151,17 @@ accessModel:
 ```
 
 The Environment Catalog replaces user-entered cloud fields in day-to-day pipeline requests. An admin configures it once during onboarding, either through this YAML file or through the admin UI after installation. Developers only select a Target Environment such as `DEV`, `QA`, `STAGE`, or `PROD`.
+
+For hybrid installs, prefer `environmentCatalog.source: generated-from-environments`. In that mode the installer derives the backend catalog from the top-level `environments` block, so the same desired-state values used to provision QA/STAGE/PROD are also used by the product runtime. After infrastructure is applied, publish the resolved catalog entry with:
+
+```bash
+bash secure_SDLC_Platform/scripts/install.sh \
+  --phase catalog \
+  --environment QA \
+  -f client-values.local.yaml
+```
+
+The command upserts the entry through the backend API. This is intentionally separate from `--phase infra`: Terraform provisions resources, while catalog sync makes the new environment selectable in the UI.
 
 Example:
 
@@ -159,6 +213,8 @@ Field guidance:
 | `isActive` | Yes | Hide inactive environments from developer forms. |
 
 The catalog is stored in the platform namespace where the Horizon backend runs. It points to DEV/QA/STAGE/PROD clusters, but it should not be stored separately inside every application cluster.
+
+When an environment has `eks.ebsCsiDriver.state=provision` and `eks.state=provision`, the installer creates an IRSA role for the AWS EBS CSI driver and attaches the AWS-managed `AmazonEBSCSIDriverPolicy`. When `eks.accessEntry.state=provision`, the installer ensures the cluster authentication mode supports access entries and then associates the deploy role with namespace-scoped access.
 
 ## Generic Role Mapping
 
