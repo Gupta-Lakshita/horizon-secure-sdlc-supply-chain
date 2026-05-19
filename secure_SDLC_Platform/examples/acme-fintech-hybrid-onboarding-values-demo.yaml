@@ -254,7 +254,7 @@ environments:
       deployRole:
         state: existing
         deletionPolicy: retain
-        roleArn: arn:aws:iam::426946630837:role/acme-fintech-role #arn:aws:iam::426946630837:role/HorizonDevDeployRole
+        roleArn: arn:aws:iam::426946630837:role/acme-fintech-role
       sourceRole:
         state: disabled
         deletionPolicy: retain
@@ -438,7 +438,7 @@ environments:
       deployRole:
         state: existing
         deletionPolicy: retain
-        roleArn: arn:aws:iam::426946630837:role/HorizonStageDeployRole
+        roleArn: arn:aws:iam::426946630837:role/acme-fintech-role
       sourceRole:
         state: disabled
         deletionPolicy: retain
@@ -586,8 +586,8 @@ environmentCatalog:
       ecrRegistry: 426946630837.dkr.ecr.us-east-1.amazonaws.com
       ecrRepositoryTemplate: acme-fintech
       artifactBucket: acme-fintech-devsecops
-      clientAwsRoleArn: arn:aws:iam::426946630837:role/HorizonDevDeployRole
-      nonprodAwsRoleArn: arn:aws:iam::426946630837:role/HorizonDevDeployRole
+      clientAwsRoleArn: arn:aws:iam::426946630837:role/acme-fintech-role
+      nonprodAwsRoleArn: arn:aws:iam::426946630837:role/acme-fintech-role
       clusterName: horizon-eks-dev
       namespaceStrategy: fixed
       namespaceTemplate: acme-fintech-angular-dev
@@ -602,8 +602,8 @@ environmentCatalog:
       ecrRegistry: 426946630837.dkr.ecr.us-east-1.amazonaws.com
       ecrRepositoryTemplate: acme-fintech
       artifactBucket: acme-fintech-devsecops
-      clientAwsRoleArn: arn:aws:iam::426946630837:role/HorizonQaDeployRole
-      nonprodAwsRoleArn: arn:aws:iam::426946630837:role/HorizonQaDeployRole
+      clientAwsRoleArn: arn:aws:iam::426946630837:role/acme-fintech-role
+      nonprodAwsRoleArn: arn:aws:iam::426946630837:role/acme-fintech-role
       clusterName: horizon-eks-qa
       namespaceStrategy: fixed
       namespaceTemplate: acme-fintech-angular-qa
@@ -618,8 +618,8 @@ environmentCatalog:
       ecrRegistry: 426946630837.dkr.ecr.us-east-1.amazonaws.com
       ecrRepositoryTemplate: acme-fintech
       artifactBucket: acme-fintech-devsecops
-      clientAwsRoleArn: arn:aws:iam::426946630837:role/HorizonStageDeployRole
-      nonprodAwsRoleArn: arn:aws:iam::426946630837:role/HorizonStageDeployRole
+      clientAwsRoleArn: arn:aws:iam::426946630837:role/acme-fintech-role
+      nonprodAwsRoleArn: arn:aws:iam::426946630837:role/acme-fintech-role
       clusterName: horizon-eks-stage
       namespaceStrategy: fixed
       namespaceTemplate: acme-fintech-angular-stage

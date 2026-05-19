@@ -85,6 +85,44 @@ run_environment_terraform() {
   return "${rc}"
 }
 
+run_existing_resource_checks() {
+  echo "== Existing resource preflight =="
+  command -v aws >/dev/null || { echo "Missing required command: aws" >&2; exit 1; }
+  aws sts get-caller-identity >/dev/null
+
+  local failures=0
+  local kind name region source
+  local check_command=(ruby "${HELPER}" checks --file "${VALUES_FILE}")
+  [[ -n "${ENVIRONMENT}" ]] && check_command+=(--environment "${ENVIRONMENT}")
+
+  while IFS=$'\t' read -r kind name region source; do
+    [[ -z "${kind}" || -z "${name}" ]] && continue
+    echo "  - ${source}: ${kind} ${name}"
+    case "${kind}" in
+      s3_bucket)
+        aws s3api head-bucket --bucket "${name}" >/dev/null || failures=1
+        ;;
+      dynamodb_table)
+        aws dynamodb describe-table --region "${region}" --table-name "${name}" >/dev/null || failures=1
+        ;;
+      ecr_repository)
+        aws ecr describe-repositories --region "${region}" --repository-names "${name}" >/dev/null || failures=1
+        ;;
+      eks_cluster)
+        aws eks describe-cluster --region "${region}" --name "${name}" >/dev/null || failures=1
+        ;;
+      iam_role)
+        aws iam get-role --role-name "${name}" >/dev/null || failures=1
+        ;;
+    esac
+  done < <("${check_command[@]}")
+
+  if [[ "${failures}" -ne 0 ]]; then
+    echo "Existing resource preflight failed. Fix the missing/invalid resources above or update the values file before running Terraform apply." >&2
+    exit 1
+  fi
+}
+
 run_state() {
   echo "== Terraform state backend phase =="
   local tfvars_file="${GENERATED_DIR}/state-backend.auto.tfvars.json"
@@ -109,6 +147,7 @@ run_infra() {
   plan_file="${GENERATED_DIR}/${env_lc}.tfplan"
   ruby "${HELPER}" plan --file "${VALUES_FILE}" --environment "${ENVIRONMENT}"
   [[ "${DRY_RUN}" == "true" ]] && { echo "Dry-run: would run Terraform init/plan for ${ENVIRONMENT}."; echo "Generated backend config: ${backend_file}"; echo "Generated tfvars: ${tfvars_file}"; return; }
+  run_existing_resource_checks
   terraform -chdir="${ROOT_DIR}/terraform/environment" init -reconfigure -backend-config="${backend_file}"
   run_environment_terraform "${backend_file}" plan -out="${plan_file}" -var-file="${tfvars_file}"
   if [[ "${AUTO_APPROVE}" == "true" ]]; then
