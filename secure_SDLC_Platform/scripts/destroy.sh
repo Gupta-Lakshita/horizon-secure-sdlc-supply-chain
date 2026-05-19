@@ -32,5 +32,37 @@ ruby "${HELPER}" backend-config --file "${VALUES_FILE}" --scope environment --en
 ruby "${HELPER}" tfvars --file "${VALUES_FILE}" --environment "${ENVIRONMENT}" > "${tfvars_file}"
 [[ "${DRY_RUN}" == "true" ]] && { echo "Dry-run: would run Terraform destroy for ${ENVIRONMENT}."; exit 0; }
 [[ "${CONFIRM}" == "${ENVIRONMENT}" ]] || { echo "Refusing to destroy. Re-run with --confirm ${ENVIRONMENT}." >&2; exit 1; }
+
+terraform_plugin_failure() {
+  local log_file="$1"
+  grep -Eq 'Failed to load plugin schemas|Unrecognized remote plugin message|failed to instantiate provider' "${log_file}"
+}
+
+repair_environment_terraform_cache() {
+  echo "Detected a local Terraform provider plugin cache issue. Rebuilding local provider cache..."
+  rm -rf "${ROOT_DIR}/terraform/environment/.terraform/providers"
+  terraform -chdir="${ROOT_DIR}/terraform/environment" init -reconfigure -upgrade -backend-config="${backend_file}"
+}
+
+run_environment_terraform() {
+  local log_file rc
+  log_file="${GENERATED_DIR}/terraform-destroy-${env_lc}-$(date +%s).log"
+
+  set +e
+  terraform -chdir="${ROOT_DIR}/terraform/environment" "$@" 2>&1 | tee "${log_file}"
+  rc=${PIPESTATUS[0]}
+  set -e
+
+  if [[ ${rc} -ne 0 ]] && terraform_plugin_failure "${log_file}"; then
+    repair_environment_terraform_cache
+    set +e
+    terraform -chdir="${ROOT_DIR}/terraform/environment" "$@"
+    rc=$?
+    set -e
+  fi
+
+  return "${rc}"
+}
+
 terraform -chdir="${ROOT_DIR}/terraform/environment" init -reconfigure -backend-config="${backend_file}"
-terraform -chdir="${ROOT_DIR}/terraform/environment" destroy -var-file="${tfvars_file}"
+run_environment_terraform destroy -var-file="${tfvars_file}"

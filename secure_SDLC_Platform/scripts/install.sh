@@ -50,6 +50,41 @@ write_env_files() {
   echo "${backend_file}|${tfvars_file}"
 }
 
+terraform_plugin_failure() {
+  local log_file="$1"
+  grep -Eq 'Failed to load plugin schemas|Unrecognized remote plugin message|failed to instantiate provider' "${log_file}"
+}
+
+repair_environment_terraform_cache() {
+  local backend_file="$1"
+  echo "Detected a local Terraform provider plugin cache issue. Rebuilding local provider cache..."
+  rm -rf "${ROOT_DIR}/terraform/environment/.terraform/providers"
+  terraform -chdir="${ROOT_DIR}/terraform/environment" init -reconfigure -upgrade -backend-config="${backend_file}"
+}
+
+run_environment_terraform() {
+  local backend_file="$1"
+  shift
+  local env_lc log_file rc
+  env_lc="$(echo "${ENVIRONMENT}" | tr '[:upper:]' '[:lower:]')"
+  log_file="${GENERATED_DIR}/terraform-${env_lc}-$(date +%s).log"
+
+  set +e
+  terraform -chdir="${ROOT_DIR}/terraform/environment" "$@" 2>&1 | tee "${log_file}"
+  rc=${PIPESTATUS[0]}
+  set -e
+
+  if [[ ${rc} -ne 0 ]] && terraform_plugin_failure "${log_file}"; then
+    repair_environment_terraform_cache "${backend_file}"
+    set +e
+    terraform -chdir="${ROOT_DIR}/terraform/environment" "$@"
+    rc=$?
+    set -e
+  fi
+
+  return "${rc}"
+}
+
 run_state() {
   echo "== Terraform state backend phase =="
   local tfvars_file="${GENERATED_DIR}/state-backend.auto.tfvars.json"
@@ -66,18 +101,20 @@ run_state() {
 
 run_infra() {
   echo "== Infrastructure phase =="
-  local files backend_file tfvars_file
+  local files backend_file tfvars_file env_lc plan_file
   files="$(write_env_files)"
   backend_file="${files%%|*}"
   tfvars_file="${files##*|}"
+  env_lc="$(echo "${ENVIRONMENT}" | tr '[:upper:]' '[:lower:]')"
+  plan_file="${GENERATED_DIR}/${env_lc}.tfplan"
   ruby "${HELPER}" plan --file "${VALUES_FILE}" --environment "${ENVIRONMENT}"
   [[ "${DRY_RUN}" == "true" ]] && { echo "Dry-run: would run Terraform init/plan for ${ENVIRONMENT}."; echo "Generated backend config: ${backend_file}"; echo "Generated tfvars: ${tfvars_file}"; return; }
   terraform -chdir="${ROOT_DIR}/terraform/environment" init -reconfigure -backend-config="${backend_file}"
-  terraform -chdir="${ROOT_DIR}/terraform/environment" plan -var-file="${tfvars_file}"
+  run_environment_terraform "${backend_file}" plan -out="${plan_file}" -var-file="${tfvars_file}"
   if [[ "${AUTO_APPROVE}" == "true" ]]; then
-    terraform -chdir="${ROOT_DIR}/terraform/environment" apply -auto-approve -var-file="${tfvars_file}"
+    run_environment_terraform "${backend_file}" apply "${plan_file}"
   else
-    echo "Plan completed. Re-run with --auto-approve to apply ${ENVIRONMENT} infrastructure."
+    echo "Plan completed and saved to ${plan_file}. Re-run with --auto-approve to apply ${ENVIRONMENT} infrastructure."
   fi
 }
 
