@@ -51,8 +51,6 @@ The backend sends `client_id`, `client_name`, an activation token, current licen
 
 The activation token must be stored as a Kubernetes Secret or in the client's external secret system. It must not be stored in Git.
 
-The Horizon-owned implementation for this flow is documented in [license-management/phase-1-license-management-service.md](license-management/phase-1-license-management-service.md). Client values should reference the sync endpoint and activation-token secret only; the signed license payload is issued by Horizon and cached by the client backend.
-
 ## Jenkins Parameters
 
 The backend passes these parameters to Jenkins:
@@ -83,4 +81,4 @@ Jenkins validates expiration, pipeline entitlement, environment entitlement, and
 
 ## Current Scope
 
-This phase enforces license status and entitlements. The Phase 1 Horizon License Management Service adds persistent clients, plans, subscriptions, activation-token hashes, license sync audit history, and basic usage events. Future phases should add a richer internal admin UI, payment/CRM integration, and automated marketplace/private-offer lifecycle management.
+This phase enforces license status and entitlements. Usage counters such as max repos, users, and monthly builds are defined in the contract and should be backed by database usage tracking in the next iteration.
