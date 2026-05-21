@@ -1,0 +1,76 @@
+replicaCount: 1
+
+image:
+  repository: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/license-management-service
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+podAnnotations: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+service:
+  type: ClusterIP
+  port: 8090
+
+ingress:
+  enabled: false
+  className: nginx
+  annotations: {}
+  hosts:
+    - host: license.horizonrelevance.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+config:
+  issuer: Horizon Relevance
+  autoCreateTables: true
+  signingMode: local-hmac # local-hmac | aws-kms
+  kmsKeyId: ""
+  kmsRegion: us-east-1
+  kmsSigningAlgorithm: RSASSA_PKCS1_V1_5_SHA_256
+
+secrets:
+  existingSecret: ""
+  databaseUrl: "postgresql+psycopg://horizon_license:change-me@postgresql:5432/horizon_license"
+  adminApiKey: "change-me-admin-key"
+  signingSecret: "change-me-signing-secret"
+  tokenPepper: "change-me-token-pepper"
+
+migrationJob:
+  enabled: false
+  backoffLimit: 2
+
+extraEnv: []
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

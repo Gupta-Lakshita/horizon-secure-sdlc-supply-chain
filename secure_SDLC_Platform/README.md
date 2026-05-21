@@ -18,6 +18,8 @@ The product code remains in the existing backend, frontend, and Jenkins shared-l
 - `examples/client-hybrid-onboarding-values.yaml`: generic desired-state file for mixed client estates where some resources exist and others must be provisioned.
 - `examples/regeneron-trial-values.yaml`: healthcare/pharma trial example with online license sync and DEV/QA/PROD account mapping.
 - `helm/horizon-platform`: umbrella Helm chart skeleton for platform configuration and license/enterprise values.
+- `helm/license-management-service`: Horizon-owned license service chart for trial, paid, enterprise subscription, activation, and online license sync.
+- `license-management-service`: production-shaped MVP service for persistent client licensing, subscription management, activation-token hashes, signed entitlements, usage events, and audit history.
 - `terraform/bootstrap`: bootstrap Terraform for client-owned artifact/ECR resources and optional Terraform remote-state S3/DynamoDB backend.
 - `terraform/environment`: environment-scoped Terraform for VPC, KMS, EKS, EBS CSI, ingress, namespace, EKS access entries, S3/ECR, and optional deploy roles.
 - `scripts/preflight.sh`: validates local tools, AWS access, values, and BYO cluster access.
@@ -30,6 +32,7 @@ The product code remains in the existing backend, frontend, and Jenkins shared-l
 - `docs/validation-only-namespace-scoped-access.md`: enterprise paid-client access model for validation-only IAM, Jenkins IRSA, and namespace-scoped EKS deployment.
 - `docs/client-hosted-test-plan.md`: end-to-end validation flow for a simulated client.
 - `docs/license-contract.md`: first backend/Jenkins license contract.
+- `docs/license-management/phase-1-license-management-service.md`: Horizon-owned license-management service workflow, architecture, admin APIs, Helm deployment, and validation checklist.
 - `docs/client-onboarding-trial-paid-enterprise-playbook.md`: product-owner onboarding, licensing, infrastructure, and commercialization playbook for trial, paid, and enterprise clients.
 - `docs/installer-runbook.md`: step-by-step installer guideline for full-provision and BYO infrastructure modes.
 - `docs/sensitive-client-data-strategy.md`: repository ownership and sensitive client data handling model.
@@ -85,5 +88,6 @@ Trial and enterprise installs should use Horizon private ECR image references, n
 | SonarQube mirror | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/sonarqube:10.4-community` |
 | Container/IaC scanner | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/trivy-scanner:1.1.2` |
 | Policy validation service | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/opa-scanner:1.0.1` |
+| License management service | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/license-management-service:0.1.0` |
 
 The backend license contract supports `allowedAwsAccountIds` and `installationId`; set both for every client-hosted trial so a copied deployment cannot be reused freely in another AWS account or installation.

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: horizon-license-management-service
+description: Horizon Relevance-owned license, subscription, entitlement, and activation service.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

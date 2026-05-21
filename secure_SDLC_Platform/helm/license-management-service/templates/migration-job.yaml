@@ -1,0 +1,43 @@
+{{- if .Values.migrationJob.enabled -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "horizon-license-management-service.fullname" . }}-migrate
+  labels:
+    {{- include "horizon-license-management-service.labels" . | nindent 4 }}
+spec:
+  backoffLimit: {{ .Values.migrationJob.backoffLimit }}
+  template:
+    metadata:
+      labels:
+        {{- include "horizon-license-management-service.selectorLabels" . | nindent 8 }}
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: {{ include "horizon-license-management-service.serviceAccountName" . }}
+      containers:
+        - name: migrate
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["alembic", "upgrade", "head"]
+          env:
+            - name: HORIZON_LICENSE_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "horizon-license-management-service.secretName" . }}
+                  key: database-url
+            - name: HORIZON_LICENSE_ADMIN_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "horizon-license-management-service.secretName" . }}
+                  key: admin-api-key
+            - name: HORIZON_LICENSE_SIGNING_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "horizon-license-management-service.secretName" . }}
+                  key: signing-secret
+            - name: HORIZON_LICENSE_TOKEN_PEPPER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "horizon-license-management-service.secretName" . }}
+                  key: token-pepper
+{{- end }}
