@@ -6,12 +6,12 @@ This index is the recommended sequence for client platform admins, developers, Q
 
 | Role | Read These First |
 | --- | --- |
-| Product owner / buyer | 01, 02, 07 |
-| Client platform admin | 01, 02, 03, 04, 08, 09, 10 |
-| Security / cloud governance | 02, 03, 04, 05, 06, 07 |
-| Developer | 01, 11, 12 |
-| QA engineer | 11, 12 |
-| Release manager | 11, 12 |
+| Product owner / buyer | 01, 02, 07, 08 |
+| Client platform admin | 01, 02, 03, 04, 08, 09, 10, 11 |
+| Security / cloud governance | 02, 03, 04, 05, 06, 07, 08 |
+| Developer | 01, 12, 13 |
+| QA engineer | 12, 13 |
+| Release manager | 12, 13 |
 
 ## Sequential Reading Path
 
@@ -36,22 +36,24 @@ This index is the recommended sequence for client platform admins, developers, Q
 7. [License Contract](license-contract.md)  
    Understand license payloads, online sync, trial expiration, installation binding, and Jenkins/backend enforcement.
 
-8. [Client Values Reference](client-values-reference.md)  
+8. [License Operations And Commercial Readiness](license-operations-and-commercial-readiness.md)  
+   Understand scheduled online sync, trial-to-enterprise conversion, revocation, activation tokens, and low-cost enterprise readiness.
+
+9. [Client Values Reference](client-values-reference.md)  
    Use this when preparing `client-values.yaml` for full-provision, BYO, and hybrid infrastructure modes.
 
-9. [Generic Hybrid Installer Lifecycle](generic-hybrid-installer-lifecycle.md)  
+10. [Generic Hybrid Installer Lifecycle](generic-hybrid-installer-lifecycle.md)  
    Read this before running installer phases for state, infrastructure, platform, catalog sync, validation, and destroy.
 
-10. [Installer Runbook](installer-runbook.md)  
+11. [Installer Runbook](installer-runbook.md)  
     Follow this as the operational step-by-step installation guide.
 
-11. [Build, Release, and Deployment Runbook](build-release-deployment-runbook.md)  
+12. [Build, Release, and Deployment Runbook](build-release-deployment-runbook.md)  
     Use this after the platform is installed. It explains how engineers build once in DEV, validate the running app, and promote the same immutable image digest through QA, STAGE, and PROD.
 
-12. [Client Hosted Test Plan](client-hosted-test-plan.md)  
+13. [Client Hosted Test Plan](client-hosted-test-plan.md)  
     Use this to perform an end-to-end client simulation and capture test evidence.
 
 ## Downloadable Client Artifact
 
 - [Build, Release, and Deployment Runbook DOCX](build-release-deployment-runbook.docx)
-
