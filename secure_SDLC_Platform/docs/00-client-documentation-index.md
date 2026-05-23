@@ -33,25 +33,31 @@ This index is the recommended sequence for client platform admins, developers, Q
 6. [Private ECR Image Distribution](private-ecr-image-distribution.md)  
    Review the product image delivery model, private registry access, and container extraction risk controls.
 
-7. [License Contract](license-contract.md)  
+7. [Secure Product Distribution Runbook](secure-product-distribution-runbook.md)  
+   Use this to grant private ECR access, verify product images, and revoke distribution access safely.
+
+8. [License Contract](license-contract.md)  
    Understand license payloads, online sync, trial expiration, installation binding, and Jenkins/backend enforcement.
 
-8. [License Operations And Commercial Readiness](license-operations-and-commercial-readiness.md)  
+9. [License Operations And Commercial Readiness](license-operations-and-commercial-readiness.md)  
    Understand scheduled online sync, trial-to-enterprise conversion, revocation, activation tokens, and low-cost enterprise readiness.
 
-9. [Client Values Reference](client-values-reference.md)  
+10. [Production Control Plane Hardening](production-control-plane-hardening.md)  
+   Review the low-cost Horizon-owned control plane hardening path before moving to paid enterprise scale.
+
+11. [Client Values Reference](client-values-reference.md)  
    Use this when preparing `client-values.yaml` for full-provision, BYO, and hybrid infrastructure modes.
 
-10. [Generic Hybrid Installer Lifecycle](generic-hybrid-installer-lifecycle.md)  
+12. [Generic Hybrid Installer Lifecycle](generic-hybrid-installer-lifecycle.md)  
    Read this before running installer phases for state, infrastructure, platform, catalog sync, validation, and destroy.
 
-11. [Installer Runbook](installer-runbook.md)  
+13. [Installer Runbook](installer-runbook.md)  
     Follow this as the operational step-by-step installation guide.
 
-12. [Build, Release, and Deployment Runbook](build-release-deployment-runbook.md)  
+14. [Build, Release, and Deployment Runbook](build-release-deployment-runbook.md)  
     Use this after the platform is installed. It explains how engineers build once in DEV, validate the running app, and promote the same immutable image digest through QA, STAGE, and PROD.
 
-13. [Client Hosted Test Plan](client-hosted-test-plan.md)  
+15. [Client Hosted Test Plan](client-hosted-test-plan.md)  
     Use this to perform an end-to-end client simulation and capture test evidence.
 
 ## Downloadable Client Artifact

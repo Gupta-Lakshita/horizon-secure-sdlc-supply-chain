@@ -120,3 +120,17 @@ For a Horizon-owned demo or pre-client environment:
 - provision QA/STAGE only for demos and destroy them afterward
 
 This keeps the product enterprise-ready without carrying enterprise-sized monthly AWS spend.
+
+## Readiness Endpoint
+
+The Horizon license service exposes operational health endpoints:
+
+| Endpoint | Use |
+| --- | --- |
+| `/live` | Kubernetes liveness probe. |
+| `/ready` | Database and signing readiness probe. |
+| `/health` | Lightweight health and version metadata. |
+
+In production, `/ready` should report `ready` with `signing=ok`. In demo mode using local HMAC signing, `ready_with_warnings` is acceptable while the commercial workflow is being tested.
+
+See [Production Control Plane Hardening](production-control-plane-hardening.md) for the low-cost production hardening path.

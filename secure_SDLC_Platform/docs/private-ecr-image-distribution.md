@@ -8,12 +8,14 @@ Horizon Relevance trial and enterprise deployments should pull product images fr
 
 | Component | Repository | Current tag |
 | --- | --- | --- |
-| Frontend | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/frontend` | `1.4.19` |
-| Backend | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend` | `1.4.22` |
+| Frontend | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/frontend` | `1.4.25` |
+| Backend | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend` | `1.4.32` |
+| License service | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/license-management-service` | `0.1.7` |
 | Jenkins | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/jenkins` | `1.0.8` |
 | SonarQube mirror | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/sonarqube` | `10.4-community` |
 | Container/IaC scanner | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/trivy-scanner` | `1.1.2` |
 | Policy validation service | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/opa-scanner` | `1.0.1` |
+| Self-service password | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/self-service-password` | `1.7.3-ltb` |
 
 ## Client Pull Access
 
@@ -45,6 +47,24 @@ Mitigations:
 - keep signing secrets and activation tokens in Kubernetes secrets
 - avoid baking customer secrets or static admin credentials into images
 - keep high-value rule packs and pipeline bundles license-gated where possible
+- publish SBOM and vulnerability evidence for every approved product image
+- sign release images or release manifests before enterprise distribution
+
+## Helper Scripts
+
+Render a least-privilege repository pull policy:
+
+```bash
+bash secure_SDLC_Platform/scripts/render-ecr-pull-policy.sh \
+  --principal-arn arn:aws:iam::<client-account-id>:role/<client-ecr-pull-role> \
+  --repository horizon/backend
+```
+
+Verify expected Horizon product image tags:
+
+```bash
+bash secure_SDLC_Platform/scripts/verify-product-images.sh --online
+```
 
 ## Trial License Binding
 
@@ -64,3 +84,5 @@ The backend denies pipeline creation when the requested ECR/image account does n
 ## Jenkins Note
 
 Jenkins image `1.0.8` is a hardened derivative of `ankur1825/horizon-jenkins:1.0.7`. It removes the static bootstrap Groovy admin script and validates the required CI tools on the runtime path. Authentication must be configured through Helm/JCasC/LDAP at deployment time.
+
+For the full operational workflow, see [Secure Product Distribution Runbook](secure-product-distribution-runbook.md).
