@@ -8,8 +8,10 @@ The most common client path is:
 2. IAM/EKS prerequisites.
 3. Client values preparation.
 4. Installer lifecycle and runbook.
-5. Build, validation, release promotion, and deployment runbook.
-6. Client-hosted test plan.
+5. Client demo, license, upgrade, and enterprise operations runbook.
+6. Build, validation, release promotion, and deployment runbook.
+7. Client-hosted test plan.
+
+For a full sales-engineering or client POC walkthrough, open [client-demo-license-and-enterprise-operations-runbook.md](client-demo-license-and-enterprise-operations-runbook.md).
 
 For hands-on build and release usage, open [build-release-deployment-runbook.md](build-release-deployment-runbook.md) or download [build-release-deployment-runbook.docx](build-release-deployment-runbook.docx).
-

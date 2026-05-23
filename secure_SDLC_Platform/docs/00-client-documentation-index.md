@@ -6,12 +6,12 @@ This index is the recommended sequence for client platform admins, developers, Q
 
 | Role | Read These First |
 | --- | --- |
-| Product owner / buyer | 01, 02, 07, 08 |
-| Client platform admin | 01, 02, 03, 04, 08, 09, 10, 11 |
-| Security / cloud governance | 02, 03, 04, 05, 06, 07, 08 |
-| Developer | 01, 12, 13 |
-| QA engineer | 12, 13 |
-| Release manager | 12, 13 |
+| Product owner / buyer | 01, 02, 07, 08, 11 |
+| Client platform admin | 01, 02, 03, 04, 08, 09, 10, 11, 12 |
+| Security / cloud governance | 02, 03, 04, 05, 06, 07, 08, 11 |
+| Developer | 01, 11, 15 |
+| QA engineer | 11, 15, 16 |
+| Release manager | 11, 15, 16 |
 
 ## Sequential Reading Path
 
@@ -45,19 +45,22 @@ This index is the recommended sequence for client platform admins, developers, Q
 10. [Production Control Plane Hardening](production-control-plane-hardening.md)  
    Review the low-cost Horizon-owned control plane hardening path before moving to paid enterprise scale.
 
-11. [Client Values Reference](client-values-reference.md)  
+11. [Client Demo, License, Upgrade, and Enterprise Operations Runbook](client-demo-license-and-enterprise-operations-runbook.md)  
+   Use this for the full client demo path: install/use the platform, sync license, configure catalog, build DEV, validate, promote QA/STAGE/PROD, and explain renewal/upgrade operations.
+
+12. [Client Values Reference](client-values-reference.md)  
    Use this when preparing `client-values.yaml` for full-provision, BYO, and hybrid infrastructure modes.
 
-12. [Generic Hybrid Installer Lifecycle](generic-hybrid-installer-lifecycle.md)  
+13. [Generic Hybrid Installer Lifecycle](generic-hybrid-installer-lifecycle.md)  
    Read this before running installer phases for state, infrastructure, platform, catalog sync, validation, and destroy.
 
-13. [Installer Runbook](installer-runbook.md)  
+14. [Installer Runbook](installer-runbook.md)  
     Follow this as the operational step-by-step installation guide.
 
-14. [Build, Release, and Deployment Runbook](build-release-deployment-runbook.md)  
+15. [Build, Release, and Deployment Runbook](build-release-deployment-runbook.md)  
     Use this after the platform is installed. It explains how engineers build once in DEV, validate the running app, and promote the same immutable image digest through QA, STAGE, and PROD.
 
-15. [Client Hosted Test Plan](client-hosted-test-plan.md)  
+16. [Client Hosted Test Plan](client-hosted-test-plan.md)  
     Use this to perform an end-to-end client simulation and capture test evidence.
 
 ## Downloadable Client Artifact
