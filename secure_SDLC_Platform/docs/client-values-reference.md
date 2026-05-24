@@ -270,11 +270,11 @@ The current hardened release image examples are:
 ```yaml
 components:
   frontend:
-    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/frontend:1.4.20
+    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/frontend:1.4.26
   backend:
-    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.24
+    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.33
   jenkins:
-    image: docker.io/ankur1825/horizon-jenkins:1.0.7
+    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/jenkins:1.0.8
 ```
 
 For enterprise deployments, prefer one of these image delivery models:

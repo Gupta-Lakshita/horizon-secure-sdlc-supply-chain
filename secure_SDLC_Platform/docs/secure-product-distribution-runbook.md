@@ -21,9 +21,9 @@ The recommended enterprise model is:
 
 | Component | Horizon private ECR image |
 | --- | --- |
-| Frontend | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/frontend:1.4.25` |
-| Backend | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.32` |
-| License service | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/license-management-service:0.1.7` |
+| Frontend | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/frontend:1.4.26` |
+| Backend | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.33` |
+| License service | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/license-management-service:0.1.9` |
 | Jenkins | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/jenkins:1.0.8` |
 | SonarQube mirror | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/sonarqube:10.4-community` |
 | Container/IaC scanner | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/trivy-scanner:1.1.2` |
@@ -38,6 +38,7 @@ Generate a repository policy for the client pull role:
 bash secure_SDLC_Platform/scripts/render-ecr-pull-policy.sh \
   --principal-arn arn:aws:iam::<client-account-id>:role/<client-ecr-pull-role> \
   --repository horizon/backend \
+  --expires-at 2026-06-30T23:59:59Z \
   --output /tmp/horizon-backend-ecr-policy.json
 ```
 
@@ -65,6 +66,41 @@ Verify the tags exist in Horizon ECR:
 ```bash
 bash secure_SDLC_Platform/scripts/verify-product-images.sh --online
 ```
+
+## Generate SBOM and Signatures
+
+Generate SBOM evidence:
+
+```bash
+bash secure_SDLC_Platform/scripts/generate-product-sbom.sh
+```
+
+Sign all required product images:
+
+```bash
+bash secure_SDLC_Platform/scripts/sign-product-images.sh \
+  --key awskms://arn:aws:kms:us-east-1:<horizon-account-id>:key/<key-id> \
+  --yes
+```
+
+Verify image signatures:
+
+```bash
+bash secure_SDLC_Platform/scripts/verify-product-signatures.sh \
+  --key awskms://arn:aws:kms:us-east-1:<horizon-account-id>:key/<key-id>
+```
+
+Package a signed rules/templates bundle:
+
+```bash
+bash secure_SDLC_Platform/scripts/package-rule-bundle.sh \
+  --source /path/to/private/horizon-rules \
+  --version 2026.05.23 \
+  --signing-key awskms://arn:aws:kms:us-east-1:<horizon-account-id>:key/<key-id> \
+  --yes
+```
+
+See [Phase 11: Secure Product Distribution](phase-11-secure-product-distribution.md) for the full signed image, SBOM, private ECR, and signed rule bundle workflow.
 
 ## Protection Boundaries
 
@@ -98,4 +134,3 @@ For regulated clients, preserve:
 - license entitlement record
 - repository policy change record
 - client approval to mirror or deploy the product release
-

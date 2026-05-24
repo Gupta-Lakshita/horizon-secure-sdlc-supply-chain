@@ -79,8 +79,9 @@ Trial and enterprise installs should use Horizon private ECR image references, n
 
 | Component | Private ECR image |
 | --- | --- |
-| Frontend | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/frontend:1.4.20` |
-| Backend | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.24` |
+| Frontend | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/frontend:1.4.26` |
+| Backend | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.33` |
+| License service | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/license-management-service:0.1.9` |
 | Jenkins | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/jenkins:1.0.8` |
 | SonarQube mirror | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/sonarqube:10.4-community` |
 | Container/IaC scanner | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/trivy-scanner:1.1.2` |

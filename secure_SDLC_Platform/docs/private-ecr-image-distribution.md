@@ -8,9 +8,9 @@ Horizon Relevance trial and enterprise deployments should pull product images fr
 
 | Component | Repository | Current tag |
 | --- | --- | --- |
-| Frontend | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/frontend` | `1.4.25` |
-| Backend | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend` | `1.4.32` |
-| License service | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/license-management-service` | `0.1.7` |
+| Frontend | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/frontend` | `1.4.26` |
+| Backend | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend` | `1.4.33` |
+| License service | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/license-management-service` | `0.1.9` |
 | Jenkins | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/jenkins` | `1.0.8` |
 | SonarQube mirror | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/sonarqube` | `10.4-community` |
 | Container/IaC scanner | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/trivy-scanner` | `1.1.2` |
@@ -57,7 +57,8 @@ Render a least-privilege repository pull policy:
 ```bash
 bash secure_SDLC_Platform/scripts/render-ecr-pull-policy.sh \
   --principal-arn arn:aws:iam::<client-account-id>:role/<client-ecr-pull-role> \
-  --repository horizon/backend
+  --repository horizon/backend \
+  --expires-at 2026-06-30T23:59:59Z
 ```
 
 Verify expected Horizon product image tags:
@@ -65,6 +66,17 @@ Verify expected Horizon product image tags:
 ```bash
 bash secure_SDLC_Platform/scripts/verify-product-images.sh --online
 ```
+
+Generate SBOM and verify signatures before client handoff:
+
+```bash
+bash secure_SDLC_Platform/scripts/generate-product-sbom.sh
+
+bash secure_SDLC_Platform/scripts/verify-product-signatures.sh \
+  --key awskms://arn:aws:kms:us-east-1:<horizon-account-id>:key/<key-id>
+```
+
+For protected Jenkins rules/templates, use signed rule bundles instead of broad repository access. See [Phase 11: Secure Product Distribution](phase-11-secure-product-distribution.md).
 
 ## Trial License Binding
 

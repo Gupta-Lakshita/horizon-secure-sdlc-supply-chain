@@ -1,0 +1,9 @@
+{
+  "bundle_name": "horizon-rules",
+  "version": "2026.05.23",
+  "created_at": "2026-05-23T00:00:00Z",
+  "sha256": "replace-with-bundle-sha256",
+  "signature": "horizon-rules-2026.05.23.tar.gz.sig",
+  "signature_algorithm": "cosign",
+  "source_policy": "private-horizon-distribution"
+}

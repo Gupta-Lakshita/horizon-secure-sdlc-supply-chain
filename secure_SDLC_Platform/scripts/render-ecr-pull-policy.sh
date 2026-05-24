@@ -4,7 +4,7 @@ set -euo pipefail
 usage() {
   cat <<'USAGE'
 Usage:
-  render-ecr-pull-policy.sh --principal-arn ARN [--repository NAME] [--output FILE]
+  render-ecr-pull-policy.sh --principal-arn ARN [--repository NAME] [--expires-at ISO8601] [--output FILE]
 
 Purpose:
   Render a least-privilege Horizon private ECR repository policy that grants
@@ -24,11 +24,13 @@ USAGE
 PRINCIPAL_ARN=""
 REPOSITORY="*"
 OUTPUT=""
+EXPIRES_AT=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --principal-arn) PRINCIPAL_ARN="${2:-}"; shift 2 ;;
     --repository) REPOSITORY="${2:-}"; shift 2 ;;
+    --expires-at) EXPIRES_AT="${2:-}"; shift 2 ;;
     --output) OUTPUT="${2:-}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage >&2; exit 1 ;;
@@ -36,6 +38,19 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ -n "${PRINCIPAL_ARN}" ]] || { echo "--principal-arn is required" >&2; exit 1; }
+
+CONDITION=""
+if [[ -n "${EXPIRES_AT}" ]]; then
+  CONDITION=$(cat <<JSON
+      ,
+      "Condition": {
+        "DateLessThan": {
+          "aws:CurrentTime": "${EXPIRES_AT}"
+        }
+      }
+JSON
+)
+fi
 
 POLICY=$(cat <<JSON
 {
@@ -53,6 +68,7 @@ POLICY=$(cat <<JSON
         "ecr:DescribeImages",
         "ecr:GetDownloadUrlForLayer"
       ]
+${CONDITION}
     }
   ]
 }
@@ -65,4 +81,3 @@ if [[ -n "${OUTPUT}" ]]; then
 else
   printf '%s\n' "${POLICY}"
 fi
-
