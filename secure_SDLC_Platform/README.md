@@ -21,6 +21,7 @@ The product code remains in the existing backend, frontend, and Jenkins shared-l
 - `terraform/bootstrap`: bootstrap Terraform for client-owned artifact/ECR resources and optional Terraform remote-state S3/DynamoDB backend.
 - `terraform/environment`: environment-scoped Terraform for VPC, KMS, EKS, EBS CSI, ingress, namespace, EKS access entries, S3/ECR, and optional deploy roles.
 - `scripts/preflight.sh`: validates local tools, AWS access, values, and BYO cluster access.
+- `scripts/trial-readiness.sh`: runs the non-destructive trial onboarding smoke test across values, Terraform dry-runs, Helm render, catalog payload, and validation.
 - `scripts/install.sh`: runs infrastructure and/or platform installation phases.
 - `scripts/validate.sh`: validates the installed namespace, enterprise config, license defaults, and pods.
 - `scripts/destroy.sh`: safely destroys only selected environment resources marked `state=provision` and `deletionPolicy=delete`.
@@ -35,6 +36,7 @@ The product code remains in the existing backend, frontend, and Jenkins shared-l
 - `docs/sensitive-client-data-strategy.md`: repository ownership and sensitive client data handling model.
 - `docs/private-ecr-image-distribution.md`: private ECR image publishing, client pull access, and container extraction risk model.
 - `docs/generic-hybrid-installer-lifecycle.md`: desired-state lifecycle for provision, validate, remote state, and destroy.
+- `docs/trial-installer-readiness-checklist.md`: final trial-client readiness checklist and evidence capture flow before real onboarding.
 - `docs/build-release-deployment-runbook.md`: end-to-end client engineer guide for build, validate, release promotion, S3/ECR evidence, and EKS deployment.
 - `docs/build-release-deployment-runbook.docx`: downloadable client-facing runbook with embedded screenshots and evidence captures.
 
@@ -71,7 +73,18 @@ Validate:
 bash secure_SDLC_Platform/scripts/validate.sh -f client-values.local.yaml --environment QA --skip-aws
 ```
 
-Start with `docs/00-client-documentation-index.md` for the recommended client reading order. See `docs/client-enterprise-architecture.md` for the conceptual architecture, `docs/installer-runbook.md` for the full installation guide, `docs/generic-hybrid-installer-lifecycle.md` for lifecycle commands, `docs/client-values-reference.md` for the current YAML structure, `docs/aws-iam-eks-prerequisites.md` for client AWS prerequisites, `docs/validation-only-namespace-scoped-access.md` for the enterprise access model, and `docs/build-release-deployment-runbook.md` for the build, validate, release promotion, and deployment workflow.
+Before onboarding a real trial client, run the full non-destructive readiness smoke test:
+
+```bash
+bash secure_SDLC_Platform/scripts/trial-readiness.sh \
+  -f client-values.local.yaml \
+  --environment QA \
+  --skip-aws
+```
+
+Remove `--skip-aws` when the client AWS profile is configured and existing-resource checks should run.
+
+Start with `docs/00-client-documentation-index.md` for the recommended client reading order. See `docs/client-enterprise-architecture.md` for the conceptual architecture, `docs/installer-runbook.md` for the full installation guide, `docs/trial-installer-readiness-checklist.md` for the trial readiness process, `docs/generic-hybrid-installer-lifecycle.md` for lifecycle commands, `docs/client-values-reference.md` for the current YAML structure, `docs/aws-iam-eks-prerequisites.md` for client AWS prerequisites, `docs/validation-only-namespace-scoped-access.md` for the enterprise access model, and `docs/build-release-deployment-runbook.md` for the build, validate, release promotion, and deployment workflow.
 
 ## Current Hardened Product Image Contract
 

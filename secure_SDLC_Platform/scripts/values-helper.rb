@@ -61,6 +61,10 @@ def blank?(value)
   value.nil? || (value.respond_to?(:empty?) && value.empty?)
 end
 
+def falsey?(value)
+  value == false || value.to_s.downcase == "false"
+end
+
 def first_present(*values)
   values.find { |value| !blank?(value) }
 end
@@ -133,10 +137,64 @@ def validate_values(values, env_name = nil)
   names = environments(values).map { |env| env["name"].to_s.upcase }
   errors << "Requested environment is not defined: #{env_name}" if env_name && !names.include?(env_name.upcase)
 
+  if !falsey?(dig_path(values, "license.enforcementEnabled")) && dig_path(values, "license.mode").to_s == "online-sync"
+    errors << "license.syncEndpoint is required when license.mode=online-sync" if blank?(dig_path(values, "license.syncEndpoint"))
+    errors << "license.activationTokenSecretName is required when license.mode=online-sync" if blank?(dig_path(values, "license.activationTokenSecretName"))
+    errors << "license.clientId is required when license.mode=online-sync" if blank?(dig_path(values, "license.clientId"))
+  end
+
+  if state_of(values["terraformState"]) != "disabled"
+    errors << "terraformState.bucket is required" if blank?(dig_path(values, "terraformState.bucket"))
+    errors << "terraformState.region or platform.region is required" if blank?(dig_path(values, "terraformState.region")) && blank?(dig_path(values, "platform.region"))
+  end
+
+  if dig_path(values, "accessModel.iamMode").to_s == "validation-only"
+    errors << "accessModel.jenkins.runtimeRole.roleArn is required for validation-only mode" if blank?(dig_path(values, "accessModel.jenkins.runtimeRole.roleArn"))
+    errors << "accessModel.backend.validationRole.roleArn is recommended for validation-only mode" if state_of(dig_path(values, "accessModel.backend.validationRole")) == "existing" && blank?(dig_path(values, "accessModel.backend.validationRole.roleArn"))
+  end
+
   counts = Hash.new(0)
   names.each { |name| counts[name] += 1 }
   duplicates = counts.select { |_name, count| count > 1 }.keys
   errors << "Duplicate environment names: #{duplicates.join(", ")}" if duplicates.any?
+
+  envs_to_validate = env_name ? [env_or_exit(values, env_name)] : environments(values)
+  envs_to_validate.each do |env|
+    next unless enabled_environment?(env)
+
+    env_label = env["name"].to_s.upcase
+    runtime = env["runtime"] || {}
+    deployable = runtime.key?("isDeployable") ? runtime["isDeployable"] != false : true
+    account_tier = env["accountTier"].to_s
+    eks = env["eks"] || {}
+    namespace = dig_path(env, "eks.namespace") || {}
+    deploy_role = dig_path(env, "iam.deployRole") || {}
+    source_role = dig_path(env, "iam.sourceRole") || {}
+    target_role = dig_path(env, "iam.targetRole") || {}
+
+    errors << "#{env_label}.aws.accountId is required" if blank?(dig_path(env, "aws.accountId"))
+    errors << "#{env_label}.aws.region is required" if blank?(dig_path(env, "aws.region"))
+    errors << "#{env_label}.terraform.stateKey is required" if blank?(dig_path(env, "terraform.stateKey"))
+
+    if deployable
+      errors << "#{env_label}.foundation.artifactBucket.name is required for deployable environments" if blank?(dig_path(env, "foundation.artifactBucket.name"))
+      if blank?(dig_path(env, "foundation.applicationEcr.repositoryName")) && blank?(dig_path(env, "foundation.applicationEcr.repositoryTemplate"))
+        errors << "#{env_label}.foundation.applicationEcr.repositoryName or repositoryTemplate is required for deployable environments"
+      end
+
+      unless state_of(eks) == "disabled"
+        errors << "#{env_label}.eks.clusterName is required for deployable Kubernetes environments" if blank?(eks["clusterName"])
+        errors << "#{env_label}.eks.namespace.template is required for namespace-scoped deployments" if dig_path(values, "accessModel.eksAccessMode").to_s == "namespace-scoped" && blank?(namespace["template"])
+      end
+
+      if account_tier == "prod"
+        errors << "#{env_label}.iam.sourceRole.roleArn is required for production promotion" if state_of(source_role) == "existing" && blank?(source_role["roleArn"])
+        errors << "#{env_label}.iam.targetRole.roleArn is required for production promotion" if state_of(target_role) == "existing" && blank?(target_role["roleArn"])
+      elsif dig_path(values, "accessModel.iamMode").to_s == "validation-only"
+        errors << "#{env_label}.iam.deployRole.roleArn is required for validation-only deployable non-prod environments" if state_of(deploy_role) == "existing" && blank?(deploy_role["roleArn"])
+      end
+    end
+  end
 
   unless dig_path(values, "lifecycle.allowDestroyExistingResources") == true
     environments(values).each do |env|

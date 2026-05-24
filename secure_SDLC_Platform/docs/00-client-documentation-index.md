@@ -7,11 +7,11 @@ This index is the recommended sequence for client platform admins, developers, Q
 | Role | Read These First |
 | --- | --- |
 | Product owner / buyer | 01, 02, 07, 08, 09, 12 |
-| Client platform admin | 01, 02, 03, 04, 08, 09, 10, 11, 12, 13 |
+| Client platform admin | 01, 02, 03, 04, 08, 09, 10, 11, 12, 13, 14, 15, 16 |
 | Security / cloud governance | 02, 03, 04, 05, 06, 07, 08, 09, 12 |
-| Developer | 01, 12, 16 |
-| QA engineer | 12, 16, 17 |
-| Release manager | 12, 16, 17 |
+| Developer | 01, 12, 17, 18 |
+| QA engineer | 12, 17, 18 |
+| Release manager | 12, 17, 18 |
 
 ## Sequential Reading Path
 
@@ -60,10 +60,13 @@ This index is the recommended sequence for client platform admins, developers, Q
 15. [Installer Runbook](installer-runbook.md)
     Follow this as the operational step-by-step installation guide.
 
-16. [Build, Release, and Deployment Runbook](build-release-deployment-runbook.md)
+16. [Trial Installer Readiness Checklist](trial-installer-readiness-checklist.md)
+    Run this before a real trial client starts using the platform. It covers non-destructive smoke testing, values validation, Terraform dry-runs, Helm render, catalog payload generation, and evidence capture.
+
+17. [Build, Release, and Deployment Runbook](build-release-deployment-runbook.md)
     Use this after the platform is installed. It explains how engineers build once in DEV, validate the running app, and promote the same immutable image digest through QA, STAGE, and PROD.
 
-17. [Client Hosted Test Plan](client-hosted-test-plan.md)
+18. [Client Hosted Test Plan](client-hosted-test-plan.md)
     Use this to perform an end-to-end client simulation and capture test evidence.
 
 ## Downloadable Client Artifact

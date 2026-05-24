@@ -6,7 +6,9 @@ ENVIRONMENT=""
 DRY_RUN="false"
 SKIP_AWS="false"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 HELPER="${SCRIPT_DIR}/values-helper.rb"
+GENERATED_DIR="${ROOT_DIR}/.generated"
 
 usage() {
   cat <<USAGE
@@ -27,6 +29,7 @@ done
 
 [[ -f "${VALUES_FILE}" ]] || { usage; exit 1; }
 command -v ruby >/dev/null || { echo "Missing required command: ruby" >&2; exit 1; }
+mkdir -p "${GENERATED_DIR}"
 
 echo "== Horizon Enterprise Installer Preflight =="
 echo "Values file: ${VALUES_FILE}"
@@ -36,9 +39,11 @@ echo "Values file: ${VALUES_FILE}"
 if [[ -n "${ENVIRONMENT}" ]]; then
   ruby "${HELPER}" validate --file "${VALUES_FILE}" --environment "${ENVIRONMENT}"
   ruby "${HELPER}" plan --file "${VALUES_FILE}" --environment "${ENVIRONMENT}"
+  ruby "${HELPER}" catalog-payload --file "${VALUES_FILE}" --environment "${ENVIRONMENT}" > "${GENERATED_DIR}/preflight-catalog-$(echo "${ENVIRONMENT}" | tr '[:upper:]' '[:lower:]').json"
 else
   ruby "${HELPER}" validate --file "${VALUES_FILE}"
   ruby "${HELPER}" plan --file "${VALUES_FILE}"
+  ruby "${HELPER}" catalog-payload --file "${VALUES_FILE}" > "${GENERATED_DIR}/preflight-catalog-all.json"
 fi
 
 if [[ "${SKIP_AWS}" == "true" ]]; then
@@ -59,16 +64,33 @@ else
   CHECK_COMMAND=(ruby "${HELPER}" checks --file "${VALUES_FILE}")
 fi
 
-"${CHECK_COMMAND[@]}" | while IFS=$'\t' read -r kind name region source; do
+failures=0
+while IFS=$'\t' read -r kind name region source; do
   [[ -z "${kind}" || -z "${name}" ]] && continue
   echo "  - ${source}: ${kind} ${name}"
   case "${kind}" in
-    s3_bucket) aws s3api head-bucket --bucket "${name}" >/dev/null ;;
-    dynamodb_table) aws dynamodb describe-table --region "${region}" --table-name "${name}" >/dev/null ;;
-    ecr_repository) aws ecr describe-repositories --region "${region}" --repository-names "${name}" >/dev/null ;;
-    eks_cluster) aws eks describe-cluster --region "${region}" --name "${name}" >/dev/null ;;
-    iam_role) aws iam get-role --role-name "${name}" >/dev/null ;;
+    s3_bucket)
+      aws s3api head-bucket --bucket "${name}" >/dev/null || failures=$((failures + 1))
+      ;;
+    dynamodb_table)
+      aws dynamodb describe-table --region "${region}" --table-name "${name}" >/dev/null || failures=$((failures + 1))
+      ;;
+    ecr_repository)
+      aws ecr describe-repositories --region "${region}" --repository-names "${name}" >/dev/null || failures=$((failures + 1))
+      ;;
+    eks_cluster)
+      aws eks describe-cluster --region "${region}" --name "${name}" >/dev/null || failures=$((failures + 1))
+      ;;
+    iam_role)
+      aws iam get-role --role-name "${name}" >/dev/null || failures=$((failures + 1))
+      ;;
   esac
-done
+done < <("${CHECK_COMMAND[@]}")
+
+if [[ "${failures}" -ne 0 ]]; then
+  echo "Preflight failed: ${failures} existing resource check(s) failed." >&2
+  echo "Fix the missing resource, update the values file, or mark the resource state as provision/disabled before installing." >&2
+  exit 1
+fi
 
 echo "Preflight passed."

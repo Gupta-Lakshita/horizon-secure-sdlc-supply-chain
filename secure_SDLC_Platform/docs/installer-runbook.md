@@ -10,17 +10,18 @@
 6. [Client Values File](#client-values-file)
 7. [Environment Catalog and Role Mapping](#environment-catalog-and-role-mapping)
 8. [Preflight Validation](#preflight-validation)
-9. [Catalog Sync](#catalog-sync)
-10. [Mode 1: Full Platform Provisioning](#mode-1-full-platform-provisioning)
-11. [Mode 2: Bring Your Own Infrastructure](#mode-2-bring-your-own-infrastructure)
-12. [Mode 3: Hybrid Desired-State Provisioning](#mode-3-hybrid-desired-state-provisioning)
-13. [Terraform Remote State](#terraform-remote-state)
-14. [Destroy Workflow](#destroy-workflow)
-15. [Online License Sync](#online-license-sync)
-16. [Identity Configuration](#identity-configuration)
-17. [Validation](#validation)
-18. [Upgrade and Renewal](#upgrade-and-renewal)
-19. [Troubleshooting](#troubleshooting)
+9. [Trial Readiness Smoke Test](#trial-readiness-smoke-test)
+10. [Catalog Sync](#catalog-sync)
+11. [Mode 1: Full Platform Provisioning](#mode-1-full-platform-provisioning)
+12. [Mode 2: Bring Your Own Infrastructure](#mode-2-bring-your-own-infrastructure)
+13. [Mode 3: Hybrid Desired-State Provisioning](#mode-3-hybrid-desired-state-provisioning)
+14. [Terraform Remote State](#terraform-remote-state)
+15. [Destroy Workflow](#destroy-workflow)
+16. [Online License Sync](#online-license-sync)
+17. [Identity Configuration](#identity-configuration)
+18. [Validation](#validation)
+19. [Upgrade and Renewal](#upgrade-and-renewal)
+20. [Troubleshooting](#troubleshooting)
 
 ## Purpose
 
@@ -213,6 +214,37 @@ Preflight checks:
 4. Required values exist.
 5. License sync endpoint is configured for online sync.
 6. Identity mode is valid.
+7. The generated Environment Catalog payload can be produced.
+8. Existing resources marked `state: existing` are reachable.
+
+## Trial Readiness Smoke Test
+
+Before a real trial client uses the product, run the bundled non-destructive readiness smoke test. This wraps the important dry-run checks into one report:
+
+```bash
+bash secure_SDLC_Platform/scripts/trial-readiness.sh \
+  -f client-values.local.yaml \
+  --environment QA \
+  --skip-aws
+```
+
+Use `--skip-aws` while editing values locally. Remove it when the client AWS profile is configured and the installer should validate existing S3, DynamoDB, ECR, EKS, and IAM resources:
+
+```bash
+export AWS_PROFILE=<client-platform-admin-profile>
+
+bash secure_SDLC_Platform/scripts/trial-readiness.sh \
+  -f client-values.local.yaml \
+  --environment QA
+```
+
+The script writes evidence to:
+
+```text
+secure_SDLC_Platform/.generated/trial-readiness-qa.txt
+```
+
+Treat this file as the trial onboarding readiness artifact. It should be attached to the client onboarding ticket before moving from dry-run to real provisioning.
 
 ## Catalog Sync
 
