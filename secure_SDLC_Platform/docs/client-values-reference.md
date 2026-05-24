@@ -60,11 +60,48 @@ components: {}
 | `sharedServices` | Client cloud/platform team | Defines shared artifact bucket, ECR repository, and notification provider defaults. |
 | `environments` | Client cloud/platform team | Desired-state source of truth for DEV/QA/STAGE/PROD resources and lifecycle state. |
 | `environmentCatalog` | Platform admin / generated | Runtime catalog served to the backend. In hybrid mode this can be generated from `environments`. |
-| `license` | Horizon issues, client installs | Controls trial/paid/enterprise entitlements. |
+| `license` | Horizon issues, client installs | Defines the online-sync bootstrap contract. Signed trial/paid/enterprise entitlements come from Horizon's license service. |
 | `identity` | Client IAM/IdP team | Configures OIDC/SAML/LDAP mode and group-to-role mappings. |
 | `components` | Horizon release + client platform team | Selects product image tags and optional services. |
 
 Use `secure_SDLC_Platform/examples/client-hybrid-onboarding-values.yaml` as the preferred enterprise starting point. It supports clients that have only AWS accounts and DNS, clients that already have some platform services, and clients that need only selected environments such as QA/STAGE provisioned.
+
+## License Bootstrap Contract
+
+The client values file should not contain manually written commercial
+entitlements. The client supplies only the identity and sync information needed
+for the client-hosted backend to request a signed license from Horizon.
+
+Client-provided fields:
+
+```yaml
+license:
+  enforcementEnabled: true
+  mode: online-sync
+  syncEndpoint: https://license.horizonrelevance.com/api/v1/licenses/sync
+  clientId: client-id-issued-by-horizon
+  activationTokenSecretName: horizon-license-activation
+  renewalCheckHours: 24
+```
+
+Do not add these fields to the client values file:
+
+```yaml
+license:
+  type: trial
+  expiresAt: "..."
+  enabledPipelines: []
+  enabledFeatures: []
+  allowedEnvironments: []
+  allowedAwsAccountIds: []
+  installationId: "..."
+  limits: {}
+```
+
+Horizon sets those values in the subscription record and returns them as a
+signed entitlement during online sync. The activation token itself is stored in
+Kubernetes Secret, AWS Secrets Manager, External Secrets, SOPS, or another
+client-approved secret workflow.
 
 ## Naming Contract
 

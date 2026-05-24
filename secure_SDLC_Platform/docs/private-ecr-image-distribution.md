@@ -80,18 +80,22 @@ For protected Jenkins rules/templates, use signed rule bundles instead of broad 
 
 ## Trial License Binding
 
-Every trial values file should include:
+Every trial values file should include only the online-sync bootstrap contract:
 
 ```yaml
 license:
   enforcementEnabled: true
   mode: online-sync
-  allowedAwsAccountIds:
-    - "111122223333"
-  installationId: client-id-horizon-trial-001
+  syncEndpoint: https://license.horizonrelevance.com/api/v1/licenses/sync
+  clientId: client-id-issued-by-horizon
+  activationTokenSecretName: horizon-license-activation
 ```
 
-The backend denies pipeline creation when the requested ECR/image account does not match the licensed account list, or when the runtime installation ID differs from the signed license payload.
+Horizon sets allowed AWS accounts, installation binding, expiration, enabled
+pipelines/features, and usage limits in the subscription record. The backend
+denies pipeline creation when the requested ECR/image account does not match the
+signed license payload, or when the runtime installation ID differs from the
+signed entitlement.
 
 ## Jenkins Note
 

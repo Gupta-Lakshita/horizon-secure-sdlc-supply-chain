@@ -39,20 +39,17 @@ license:
   enforcementEnabled: true
   mode: online-sync
   syncEndpoint: https://license.horizonrelevance.com/api/v1/licenses/sync
+  # Horizon issues this stable client key during trial/paid onboarding.
+  # It should match client.id unless Horizon explicitly assigns another key.
   clientId: acme-fintech
+  # The activation token value is stored in a Kubernetes Secret or external
+  # secret manager. Do not commit the token to this file.
   activationTokenSecretName: horizon-license-activation
   renewalCheckHours: 24
-  type: trial
-  expiresAt: "2026-06-30T23:59:59Z"
-  enabledPipelines: ["Build & Deploy Pipeline", "Test DevSecOps Pipeline", "Production Release Pipeline"]
-  enabledFeatures: ["build", "artifact_publish", "code_scan", "image_scan", "policy_validation", "test_suites", "notifications", "production_promotion"]
-  allowedEnvironments: ["DEV", "QA", "STAGE", "PROD"]
-  allowedAwsAccountIds: ["426946630837"]
-  installationId: acme-fintech-horizon-trial-001
-  limits:
-    maxRepos: 10
-    maxBuildsPerMonth: 100
-    maxUsers: 25
+  # Do not put trial/paid/enterprise entitlements here. Horizon's license
+  # service returns type, expiry, enabled pipelines/features, allowed AWS
+  # accounts, allowed environments, installation binding, and usage limits as
+  # a signed license during online sync.
 
 domain:
   state: existing

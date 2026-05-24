@@ -34,10 +34,18 @@ The client values file should not contain a hand-written signed license. It shou
 
 ```yaml
 license:
+  enforcementEnabled: true
   mode: online-sync
   syncEndpoint: https://license.horizonrelevance.com/api/v1/licenses/sync
+  clientId: client-issued-by-horizon
   activationTokenSecretName: horizon-license-activation
+  renewalCheckHours: 24
 ```
+
+Do not put license type, expiration date, enabled pipelines, enabled features,
+allowed environments, allowed AWS accounts, installation binding, or usage
+limits in `client-values.yaml`. Horizon's license service owns those commercial
+entitlements and returns them as a signed license during online sync.
 
 The backend Helm values should resolve to:
 

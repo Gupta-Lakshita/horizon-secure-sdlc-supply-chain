@@ -595,10 +595,15 @@ license:
   enforcementEnabled: true
   mode: online-sync
   clientId: regeneron-healthcare
-  allowedEnvironments:
-    - DEV
-    - QA
+  syncEndpoint: https://license.horizonrelevance.com/api/v1/licenses/sync
+  activationTokenSecretName: horizon-license-activation
+  renewalCheckHours: 24
 ```
+
+The trial/paid/enterprise license terms are not manually written in this file.
+Horizon's license service returns allowed environments, AWS account bindings,
+enabled pipelines/features, expiration, and usage limits as a signed entitlement
+during online sync.
 
 Install:
 
