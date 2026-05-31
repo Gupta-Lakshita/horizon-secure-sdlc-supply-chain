@@ -32,11 +32,12 @@ The recommended enterprise model is:
 
 ## Grant Client Pull Access
 
-Generate a repository policy for the client pull role:
+For the early enterprise model, maintain a licensed client AWS account allowlist and render the same read-only repository policy for each approved Horizon product repository. Grant account roots in the Horizon ECR repository policy, then let each client account restrict pull/copy access to its own EKS node role, import role, or image pull role.
 
 ```bash
 bash secure_SDLC_Platform/scripts/render-ecr-pull-policy.sh \
-  --principal-arn arn:aws:iam::<client-account-id>:role/<client-ecr-pull-role> \
+  --client-account-id 921570400913 \
+  --client-account-id <another-licensed-client-account-id> \
   --repository horizon/backend \
   --expires-at 2026-06-30T23:59:59Z \
   --output /tmp/horizon-backend-ecr-policy.json
@@ -51,7 +52,30 @@ aws ecr set-repository-policy \
   --policy-text file:///tmp/horizon-backend-ecr-policy.json
 ```
 
-The client pull role still needs identity permission for `ecr:GetAuthorizationToken`.
+Apply the policy to all approved repositories:
+
+```bash
+for repo in \
+  horizon/frontend \
+  horizon/backend \
+  horizon/jenkins \
+  horizon/sonarqube \
+  horizon/trivy-scanner \
+  horizon/opa-scanner \
+  horizon/self-service-password; do
+  bash secure_SDLC_Platform/scripts/render-ecr-pull-policy.sh \
+    --client-account-id 921570400913 \
+    --repository "${repo}" \
+    --output "/tmp/${repo//\//-}-pull-policy.json"
+
+  aws ecr set-repository-policy \
+    --region us-east-1 \
+    --repository-name "${repo}" \
+    --policy-text "file:///tmp/${repo//\//-}-pull-policy.json"
+done
+```
+
+The client pull role still needs identity permission for `ecr:GetAuthorizationToken`; do not put that action in the Horizon repository policy.
 
 ## Verify Release Images
 

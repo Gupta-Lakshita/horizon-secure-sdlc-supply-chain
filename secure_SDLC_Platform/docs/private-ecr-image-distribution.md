@@ -19,7 +19,7 @@ Horizon Relevance trial and enterprise deployments should pull product images fr
 
 ## Client Pull Access
 
-For trials, grant the client AWS account read-only ECR access to only the required repositories and tags. Prefer cross-account repository policies over copying images into the client account.
+For the early enterprise distribution model, keep a small licensed-account allowlist and grant each licensed client AWS account read-only ECR access to only the approved Horizon product repositories. Use the client account root ARN in the repository policy, such as `arn:aws:iam::921570400913:root`; the client account still controls which internal roles can actually pull through its own IAM policies.
 
 Required pull actions:
 
@@ -56,10 +56,36 @@ Render a least-privilege repository pull policy:
 
 ```bash
 bash secure_SDLC_Platform/scripts/render-ecr-pull-policy.sh \
-  --principal-arn arn:aws:iam::<client-account-id>:role/<client-ecr-pull-role> \
+  --client-account-id 921570400913 \
+  --client-account-id <another-licensed-client-account-id> \
   --repository horizon/backend \
   --expires-at 2026-06-30T23:59:59Z
 ```
+
+Apply the rendered policy to each approved Horizon product repository from the Horizon AWS account:
+
+```bash
+for repo in \
+  horizon/frontend \
+  horizon/backend \
+  horizon/jenkins \
+  horizon/sonarqube \
+  horizon/trivy-scanner \
+  horizon/opa-scanner \
+  horizon/self-service-password; do
+  bash secure_SDLC_Platform/scripts/render-ecr-pull-policy.sh \
+    --client-account-id 921570400913 \
+    --repository "${repo}" \
+    --output "/tmp/${repo//\//-}-pull-policy.json"
+
+  aws ecr set-repository-policy \
+    --region us-east-1 \
+    --repository-name "${repo}" \
+    --policy-text "file:///tmp/${repo//\//-}-pull-policy.json"
+done
+```
+
+Do not add `ecr:GetAuthorizationToken` to the repository policy. That action must be granted to the client-side node role, import role, or image pull role as an identity policy in the client AWS account.
 
 Verify expected Horizon product image tags:
 
