@@ -123,6 +123,44 @@ run_existing_resource_checks() {
   fi
 }
 
+reconcile_environment_placeholder_secret() {
+  local tfvars_file="$1"
+  local create_secret_prefix secret_prefix aws_region secret_name describe_output deleted_date resource_address
+
+  create_secret_prefix="$(ruby -rjson -e 'v = JSON.parse(File.read(ARGV[0])); puts v["create_secret_prefix"]' "${tfvars_file}")"
+  secret_prefix="$(ruby -rjson -e 'v = JSON.parse(File.read(ARGV[0])); puts v["secret_prefix"].to_s' "${tfvars_file}")"
+  aws_region="$(ruby -rjson -e 'v = JSON.parse(File.read(ARGV[0])); puts v["aws_region"].to_s' "${tfvars_file}")"
+
+  [[ "${create_secret_prefix}" == "true" && -n "${secret_prefix}" ]] || return 0
+
+  secret_name="${secret_prefix}/installer-placeholder"
+  resource_address='aws_secretsmanager_secret.environment_placeholder[0]'
+
+  set +e
+  describe_output="$(aws secretsmanager describe-secret --region "${aws_region}" --secret-id "${secret_name}" 2>&1)"
+  local describe_rc=$?
+  set -e
+
+  if [[ ${describe_rc} -ne 0 ]]; then
+    if grep -q "ResourceNotFoundException" <<< "${describe_output}"; then
+      return 0
+    fi
+    echo "${describe_output}" >&2
+    return "${describe_rc}"
+  fi
+
+  deleted_date="$(ruby -rjson -e 'secret = JSON.parse(STDIN.read); puts secret["DeletedDate"].to_s' <<< "${describe_output}")"
+  if [[ -n "${deleted_date}" ]]; then
+    echo "Restoring Secrets Manager placeholder secret scheduled for deletion: ${secret_name}"
+    aws secretsmanager restore-secret --region "${aws_region}" --secret-id "${secret_name}" >/dev/null
+  fi
+
+  if ! terraform -chdir="${ROOT_DIR}/terraform/environment" state show "${resource_address}" >/dev/null 2>&1; then
+    echo "Importing existing Secrets Manager placeholder secret into Terraform state: ${secret_name}"
+    terraform -chdir="${ROOT_DIR}/terraform/environment" import -var-file="${tfvars_file}" "${resource_address}" "${secret_name}"
+  fi
+}
+
 run_state() {
   echo "== Terraform state backend phase =="
   local tfvars_file="${GENERATED_DIR}/state-backend.auto.tfvars.json"
@@ -149,6 +187,7 @@ run_infra() {
   [[ "${DRY_RUN}" == "true" ]] && { echo "Dry-run: would run Terraform init/plan for ${ENVIRONMENT}."; echo "Generated backend config: ${backend_file}"; echo "Generated tfvars: ${tfvars_file}"; return; }
   run_existing_resource_checks
   terraform -chdir="${ROOT_DIR}/terraform/environment" init -reconfigure -backend-config="${backend_file}"
+  reconcile_environment_placeholder_secret "${tfvars_file}"
   run_environment_terraform "${backend_file}" plan -out="${plan_file}" -var-file="${tfvars_file}"
   if [[ "${AUTO_APPROVE}" == "true" ]]; then
     run_environment_terraform "${backend_file}" apply "${plan_file}"
