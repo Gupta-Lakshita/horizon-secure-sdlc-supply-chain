@@ -1,0 +1,453 @@
+{{- $values := .Values -}}
+{{- $components := default dict $values.components -}}
+{{- $frontend := default dict $components.frontend -}}
+{{- $backend := default dict $components.backend -}}
+{{- $jenkins := default dict $components.jenkins -}}
+{{- $sonarqube := default dict $components.sonarqube -}}
+{{- $platform := default dict $values.platform -}}
+{{- $cluster := default dict $platform.cluster -}}
+{{- $accessModel := default dict $values.accessModel -}}
+{{- $backendAccess := default dict $accessModel.backend -}}
+{{- $backendSa := default dict $backendAccess.serviceAccount -}}
+{{- $jenkinsAccess := default dict $accessModel.jenkins -}}
+{{- $jenkinsSa := default dict $jenkinsAccess.serviceAccount -}}
+{{- $domain := default dict $values.domain -}}
+{{- $platformHosts := default dict $domain.platformHosts -}}
+{{- $license := default dict $values.license -}}
+{{- $identity := default dict $values.identity -}}
+{{- $ldap := default dict $identity.ldap -}}
+{{- $backendSecretName := default "horizon-backend-secrets" $platform.backendSecretName -}}
+{{- $jenkinsPath := default "/" $platformHosts.jenkinsPath -}}
+{{- $imagePullSecrets := default (default list $values.imagePullSecrets) $platform.imagePullSecrets -}}
+{{- if default true $frontend.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: horizon-frontend
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: horizon-frontend
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  replicas: {{ default 1 $frontend.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: horizon-frontend
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: horizon-frontend
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      {{- if $imagePullSecrets }}
+      imagePullSecrets:
+        {{- range $imagePullSecrets }}
+        - name: {{ if kindIs "map" . }}{{ .name | quote }}{{ else }}{{ . | quote }}{{ end }}
+        {{- end }}
+      {{- end }}
+      containers:
+        - name: frontend
+          image: {{ required "components.frontend.image is required" $frontend.image | quote }}
+          imagePullPolicy: {{ default "Always" $frontend.imagePullPolicy }}
+          ports:
+            - name: http
+              containerPort: 80
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 20
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: horizon-frontend
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: horizon-frontend
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: horizon-frontend
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+{{- end }}
+{{- if default true $backend.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: horizon-backend
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: horizon-backend
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  replicas: {{ default 1 $backend.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: horizon-backend
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: horizon-backend
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      serviceAccountName: {{ default "horizon-backend" $backendSa.name }}
+      securityContext:
+        fsGroup: 10001
+      {{- if $imagePullSecrets }}
+      imagePullSecrets:
+        {{- range $imagePullSecrets }}
+        - name: {{ if kindIs "map" . }}{{ .name | quote }}{{ else }}{{ . | quote }}{{ end }}
+        {{- end }}
+      {{- end }}
+      containers:
+        - name: backend
+          image: {{ required "components.backend.image is required" $backend.image | quote }}
+          imagePullPolicy: {{ default "Always" $backend.imagePullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8000
+          env:
+            - name: DB_PATH
+              value: /app/data
+            - name: JENKINS_URL
+              value: {{ default "http://horizon-jenkins:8080" $backend.jenkinsUrl | quote }}
+            - name: JENKINS_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $backendSecretName | quote }}
+                  key: JENKINS_USER
+                  optional: true
+            - name: JENKINS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $backendSecretName | quote }}
+                  key: JENKINS_TOKEN
+                  optional: true
+            - name: GITHUB_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $backendSecretName | quote }}
+                  key: GITHUB_WEBHOOK_SECRET
+            - name: JENKINS_RUNTIME_ROLE_ARN
+              valueFrom:
+                configMapKeyRef:
+                  name: horizon-enterprise-config
+                  key: JENKINS_RUNTIME_ROLE_ARN
+                  optional: true
+            - name: ENVIRONMENT_PREFLIGHT_ENFORCED
+              valueFrom:
+                configMapKeyRef:
+                  name: horizon-enterprise-config
+                  key: BACKEND_PREFLIGHT_ENFORCED
+                  optional: true
+            - name: ENVIRONMENT_IAM_MODE
+              valueFrom:
+                configMapKeyRef:
+                  name: horizon-enterprise-config
+                  key: IAM_MODE
+                  optional: true
+            - name: ENVIRONMENT_EKS_ACCESS_MODE
+              valueFrom:
+                configMapKeyRef:
+                  name: horizon-enterprise-config
+                  key: EKS_ACCESS_MODE
+                  optional: true
+            - name: ENVIRONMENT_CATALOG_FILE
+              value: /app/config/environment-catalog.json
+            - name: LDAP_SERVER
+              value: {{ default "ldap://horizon-openldap:389" $ldap.host | quote }}
+            - name: LDAP_USER
+              value: {{ default "cn=admin,dc=horizonrelevance,dc=local" $ldap.bindDn | quote }}
+            - name: LDAP_MANAGER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ default "horizon-ldap-bind" $ldap.bindSecretName | quote }}
+                  key: {{ default "password" $ldap.bindSecretKey | quote }}
+                  optional: true
+            - name: LDAP_BASE_DN
+              value: {{ default "ou=users,dc=horizonrelevance,dc=local" $ldap.userBaseDn | quote }}
+            - name: LDAP_GROUP_BASE_DN
+              value: {{ default "ou=groups,dc=horizonrelevance,dc=local" $ldap.groupBaseDn | quote }}
+            - name: LDAP_GROUP_SEARCH_FILTER
+              value: {{ default "(&(objectClass=groupOfNames)(member={user_dn}))" $ldap.groupSearchFilter | quote }}
+            - name: LDAP_GROUP_MEMBER_ATTRIBUTE
+              value: {{ default "member" $ldap.groupMemberAttribute | quote }}
+            - name: LDAP_GROUP_NAME_ATTRIBUTE
+              value: {{ default "cn" $ldap.groupNameAttribute | quote }}
+            - name: LDAP_USER_GROUP_ATTRIBUTE
+              value: {{ default "memberOf" $ldap.userGroupAttribute | quote }}
+            - name: LDAP_ROLE_GROUP_MAPPINGS
+              value: {{ default dict $ldap.roleGroupMappings | toJson | quote }}
+            - name: ENTERPRISE_LICENSE_ENFORCEMENT_ENABLED
+              value: {{ default false $license.enforcementEnabled | quote }}
+            - name: ENTERPRISE_CLIENT_ID
+              value: {{ default (default "client" $values.client.id) $license.clientId | quote }}
+            - name: ENTERPRISE_CLIENT_NAME
+              value: {{ default "" $values.client.name | quote }}
+            - name: ENTERPRISE_LICENSE_MODE
+              value: {{ default "online-sync" $license.mode | quote }}
+            - name: ENTERPRISE_LICENSE_SYNC_ENDPOINT
+              value: {{ default "" $license.syncEndpoint | quote }}
+            - name: ENTERPRISE_LICENSE_CACHE_FILE
+              value: /app/data/enterprise-license-cache.json
+            - name: ENTERPRISE_LICENSE_ACTIVATION_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ default "horizon-license-activation" $license.activationTokenSecretName | quote }}
+                  key: {{ default "activationToken" $license.activationTokenSecretKey | quote }}
+                  optional: true
+          volumeMounts:
+            - name: backend-data
+              mountPath: /app/data
+            - name: environment-catalog
+              mountPath: /app/config/environment-catalog.json
+              subPath: environment-catalog.json
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /license/status
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 15
+          livenessProbe:
+            httpGet:
+              path: /license/status
+              port: http
+            initialDelaySeconds: 45
+            periodSeconds: 30
+      volumes:
+        - name: backend-data
+          persistentVolumeClaim:
+            claimName: horizon-backend-data
+        - name: environment-catalog
+          configMap:
+            name: horizon-enterprise-config
+            items:
+              - key: ENVIRONMENT_CATALOG_JSON
+                path: environment-catalog.json
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: horizon-backend
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: horizon-backend
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: horizon-backend
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+---
+{{- end }}
+{{- if default true $jenkins.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: horizon-jenkins
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: horizon-jenkins
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  replicas: {{ default 1 $jenkins.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: horizon-jenkins
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: horizon-jenkins
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      serviceAccountName: {{ default "jenkins" (default $jenkinsAccess.serviceAccountName $jenkinsSa.name) }}
+      securityContext:
+        fsGroup: 1000
+      {{- if $imagePullSecrets }}
+      imagePullSecrets:
+        {{- range $imagePullSecrets }}
+        - name: {{ if kindIs "map" . }}{{ .name | quote }}{{ else }}{{ . | quote }}{{ end }}
+        {{- end }}
+      {{- end }}
+      containers:
+        - name: jenkins
+          image: {{ required "components.jenkins.image is required" $jenkins.image | quote }}
+          imagePullPolicy: {{ default "Always" $jenkins.imagePullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: JAVA_OPTS
+              value: {{ default "-Djenkins.install.runSetupWizard=false" $jenkins.javaOpts | quote }}
+            - name: JENKINS_OPTS
+              value: {{ if and $jenkinsPath (ne $jenkinsPath "/") }}{{ printf "--prefix=%s" $jenkinsPath | quote }}{{ else }}""{{ end }}
+            - name: JENKINS_RUNTIME_ROLE_ARN
+              valueFrom:
+                configMapKeyRef:
+                  name: horizon-enterprise-config
+                  key: JENKINS_RUNTIME_ROLE_ARN
+                  optional: true
+          volumeMounts:
+            - name: jenkins-home
+              mountPath: /var/jenkins_home
+          readinessProbe:
+            httpGet:
+              path: {{ if and $jenkinsPath (ne $jenkinsPath "/") }}{{ printf "%s/login" $jenkinsPath | quote }}{{ else }}"/login"{{ end }}
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 15
+            failureThreshold: 10
+          livenessProbe:
+            httpGet:
+              path: {{ if and $jenkinsPath (ne $jenkinsPath "/") }}{{ printf "%s/login" $jenkinsPath | quote }}{{ else }}"/login"{{ end }}
+              port: http
+            initialDelaySeconds: 120
+            periodSeconds: 30
+            failureThreshold: 6
+      volumes:
+        - name: jenkins-home
+          persistentVolumeClaim:
+            claimName: horizon-jenkins-home
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: horizon-jenkins
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: horizon-jenkins
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: horizon-jenkins
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+{{- end }}
+{{- if default true $sonarqube.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: horizon-sonarqube
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: horizon-sonarqube
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  replicas: {{ default 1 $sonarqube.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: horizon-sonarqube
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: horizon-sonarqube
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      securityContext:
+        fsGroup: 1000
+      {{- if $imagePullSecrets }}
+      imagePullSecrets:
+        {{- range $imagePullSecrets }}
+        - name: {{ if kindIs "map" . }}{{ .name | quote }}{{ else }}{{ . | quote }}{{ end }}
+        {{- end }}
+      {{- end }}
+      containers:
+        - name: sonarqube
+          image: {{ required "components.sonarqube.image is required" $sonarqube.image | quote }}
+          imagePullPolicy: {{ default "Always" $sonarqube.imagePullPolicy }}
+          ports:
+            - name: http
+              containerPort: 9000
+          env:
+            - name: SONAR_ES_BOOTSTRAP_CHECKS_DISABLE
+              value: "true"
+            - name: SONAR_WEB_CONTEXT
+              value: {{ default "" $sonarqube.webContext | quote }}
+          volumeMounts:
+            - name: sonarqube-data
+              mountPath: /opt/sonarqube/data
+            - name: sonarqube-temp
+              mountPath: /opt/sonarqube/temp
+            - name: sonarqube-logs
+              mountPath: /opt/sonarqube/logs
+            - name: sonarqube-extensions
+              mountPath: /opt/sonarqube/extensions
+          readinessProbe:
+            httpGet:
+              path: /api/system/status
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 20
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /api/system/status
+              port: http
+            initialDelaySeconds: 180
+            periodSeconds: 30
+            failureThreshold: 8
+      volumes:
+        - name: sonarqube-data
+          persistentVolumeClaim:
+            claimName: horizon-sonarqube-data
+        - name: sonarqube-temp
+          emptyDir: {}
+        - name: sonarqube-logs
+          emptyDir: {}
+        - name: sonarqube-extensions
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: horizon-sonarqube
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: horizon-sonarqube
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: horizon-sonarqube
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: http
+      port: 9000
+      targetPort: http
+{{- end }}

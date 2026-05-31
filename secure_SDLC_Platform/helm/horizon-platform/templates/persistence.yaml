@@ -1,0 +1,63 @@
+{{- $platform := default dict .Values.platform -}}
+{{- $cluster := default dict $platform.cluster -}}
+{{- $storageClass := default "gp3" $cluster.storageClassName -}}
+{{- $components := default dict .Values.components -}}
+{{- $backend := default dict $components.backend -}}
+{{- $jenkins := default dict $components.jenkins -}}
+{{- $sonarqube := default dict $components.sonarqube -}}
+{{- if default true $backend.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: horizon-backend-data
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: horizon-backend
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: {{ $storageClass | quote }}
+  resources:
+    requests:
+      storage: {{ default "5Gi" $backend.storageSize | quote }}
+---
+{{- end }}
+{{- if default true $jenkins.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: horizon-jenkins-home
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: horizon-jenkins
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: {{ $storageClass | quote }}
+  resources:
+    requests:
+      storage: {{ default "20Gi" $jenkins.storageSize | quote }}
+---
+{{- end }}
+{{- if default true $sonarqube.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: horizon-sonarqube-data
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: horizon-sonarqube
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: {{ $storageClass | quote }}
+  resources:
+    requests:
+      storage: {{ default "10Gi" $sonarqube.storageSize | quote }}
+{{- end }}

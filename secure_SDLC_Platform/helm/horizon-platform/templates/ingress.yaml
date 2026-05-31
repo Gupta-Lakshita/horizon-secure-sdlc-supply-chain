@@ -1,0 +1,122 @@
+{{- $values := .Values -}}
+{{- $components := default dict $values.components -}}
+{{- $frontend := default dict $components.frontend -}}
+{{- $backend := default dict $components.backend -}}
+{{- $jenkins := default dict $components.jenkins -}}
+{{- $sonarqube := default dict $components.sonarqube -}}
+{{- $platform := default dict $values.platform -}}
+{{- $cluster := default dict $platform.cluster -}}
+{{- $domain := default dict $values.domain -}}
+{{- $platformHosts := default dict $domain.platformHosts -}}
+{{- $ingressClass := default "nginx" $cluster.ingressClassName -}}
+{{- $scheme := default "https" $platformHosts.scheme -}}
+{{- $frontendHost := default (default "" $domain.frontendHost) $platformHosts.frontendHost -}}
+{{- $backendPath := default (default "/pipeline/api" $domain.backendPath) $platformHosts.backendPath -}}
+{{- $jenkinsHost := default (default "" $domain.jenkinsHost) $platformHosts.jenkinsHost -}}
+{{- $jenkinsPath := default "/" $platformHosts.jenkinsPath -}}
+{{- $sonarqubeHost := default (default "" $domain.sonarqubeHost) $platformHosts.sonarqubeHost -}}
+{{- if and (default true $frontend.enabled) $frontendHost }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: horizon-platform-frontend-rewrite
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: horizon-frontend
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+    nginx.ingress.kubernetes.io/use-regex: "true"
+spec:
+  ingressClassName: {{ $ingressClass }}
+  rules:
+    - host: {{ $frontendHost }}
+      http:
+        paths:
+          - path: /pipeline(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: horizon-frontend
+                port:
+                  number: 80
+---
+{{- end }}
+{{- if and (default true $backend.enabled) $frontendHost }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: horizon-platform-backend-rewrite
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: horizon-backend
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+    nginx.ingress.kubernetes.io/use-regex: "true"
+spec:
+  ingressClassName: {{ $ingressClass }}
+  rules:
+    - host: {{ $frontendHost }}
+      http:
+        paths:
+          - path: {{ printf "%s(/|$)(.*)" $backendPath | quote }}
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: horizon-backend
+                port:
+                  number: 8000
+---
+{{- end }}
+{{- if and (default true $jenkins.enabled) $jenkinsHost }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: horizon-jenkins
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: horizon-jenkins
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  ingressClassName: {{ $ingressClass }}
+  rules:
+    - host: {{ $jenkinsHost }}
+      http:
+        paths:
+          - path: {{ $jenkinsPath | quote }}
+            pathType: Prefix
+            backend:
+              service:
+                name: horizon-jenkins
+                port:
+                  number: 8080
+---
+{{- end }}
+{{- if and (default true $sonarqube.enabled) $sonarqubeHost }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: horizon-sonarqube
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: horizon-sonarqube
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  ingressClassName: {{ $ingressClass }}
+  rules:
+    - host: {{ $sonarqubeHost }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: horizon-sonarqube
+                port:
+                  number: 9000
+{{- end }}

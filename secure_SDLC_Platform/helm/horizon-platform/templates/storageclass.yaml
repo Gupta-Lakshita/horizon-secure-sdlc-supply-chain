@@ -1,0 +1,22 @@
+{{- $platform := default dict .Values.platform -}}
+{{- $cluster := default dict $platform.cluster -}}
+{{- $storageClass := default "gp3" $cluster.storageClassName -}}
+{{- $createStorageClass := default true $cluster.createStorageClass -}}
+{{- $existing := lookup "storage.k8s.io/v1" "StorageClass" "" $storageClass -}}
+{{- if and $createStorageClass (not $existing) -}}
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: {{ $storageClass }}
+  labels:
+    app.kubernetes.io/name: horizon-platform-storage
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+provisioner: ebs.csi.aws.com
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+parameters:
+  type: gp3
+  encrypted: "true"
+reclaimPolicy: Delete
+{{- end }}

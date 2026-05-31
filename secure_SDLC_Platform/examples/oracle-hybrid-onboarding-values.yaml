@@ -1,0 +1,341 @@
+# Oracle full-provision onboarding template.
+#
+# Scenario:
+# - Oracle has two AWS accounts and no platform services yet.
+# - Non-prod account: 921570400913. Used for platform, DEV, QA, and STAGE.
+# - Prod account: 859925122079. Reserved for production promotion/deployment.
+# - Trial DNS is hosted in Horizon Route53 and points to Oracle's ingress load balancer.
+#
+# Bootstrap requirement:
+# The client must first assume or use InstallerExecutionRole in each account.
+# Jenkins runtime and backend validation roles are platform bootstrap roles in
+# the non-prod account. The current installer uses these role ARNs but does not
+# create them yet; create them once before running infra/platform phases.
+installer:
+  mode: full-provision
+  releaseName: oracle-ai-devsecops
+  namespace: oracle-horizon-platform
+  # No DNS mode: catalog sync can use a port-forwarded backend endpoint.
+  # Example:
+  #   kubectl -n oracle-horizon-platform port-forward svc/horizon-backend 8000:8000
+  #   catalogSync.backendUrl: http://localhost:8000
+  backendUrl: ""
+
+naming:
+  resourceNamePrefix: oracle-horizon
+  managedBy: horizon-enterprise-installer
+  kmsAliasPrefix: horizon/oracle
+
+terraformState:
+  state: provision
+  backend: s3
+  bucket: oracle-horizon-tfstate-921570400913-us-east-1
+  region: us-east-1
+  lockTable: oracle-horizon-tflock
+  kmsKeyArn: ""
+  keyPrefix: horizon-installer
+  deletionPolicy: retain
+
+lifecycle:
+  deletionProtection: true
+  allowDestroyExistingResources: false
+  defaultDeletionPolicy: retain
+
+client:
+  id: oracle
+  name: "Oracle"
+  industry: technology
+  dataBoundary: client-hosted
+
+license:
+  enforcementEnabled: true
+  mode: online-sync
+  syncEndpoint: https://license.horizonrelevance.com/api/v1/licenses/sync
+  clientId: oracle
+  activationTokenSecretName: horizon-license-activation
+  renewalCheckHours: 24
+
+domain:
+  state: existing
+  deletionPolicy: retain
+  provider: external
+  baseDomain: horizonrelevance.com
+  platformHosts:
+    scheme: https
+    frontendHost: oracle-trial.horizonrelevance.com
+    backendPath: /pipeline/api
+    backendUrl: https://oracle-trial.horizonrelevance.com/pipeline/api
+    jenkinsHost: jenkins-oracle-trial.horizonrelevance.com
+    jenkinsPath: /
+    sonarqubeHost: sonar-oracle-trial.horizonrelevance.com
+    keycloakHost: keycloak-oracle-trial.horizonrelevance.com
+
+catalogSync:
+  # With no DNS, use backendUrl=http://localhost:8000 after port-forwarding
+  # the backend service. Keep tlsVerify true for real HTTPS endpoints.
+  backendUrl: ""
+  tlsVerify: true
+  caBundlePath: ""
+
+identity:
+  # For an initial no-DNS trial, provisioned identity can be used. For a real
+  # enterprise rollout, switch this to existing-idp/existing-ldap and map the
+  # client's real AD/LDAP groups.
+  mode: provisioned-keycloak-openldap
+  ldap:
+    enabled: true
+    roleGroupMappings:
+      platform-admin: ["oracle-platform-admins"]
+      developer: ["oracle-developers"]
+      qa: ["oracle-qa"]
+      release-manager: ["oracle-release-managers"]
+      viewer: ["oracle-viewers"]
+
+platform:
+  accountId: "921570400913"
+  region: us-east-1
+  terraform:
+    stateKey: horizon-installer/platform/terraform.tfstate
+  cluster:
+    # The platform runs in the shared non-prod EKS cluster created by the DEV
+    # infra phase. Run DEV infra first, update kubeconfig, then run platform.
+    state: provision
+    deletionPolicy: retain
+    name: oracle-nonprod-eks
+    namespace: oracle-horizon-platform
+    ingressClassName: nginx
+    storageClassName: gp3
+  images:
+    # Horizon product images. For a production customer, mirror these into a
+    # private client-approved ECR registry after license validation.
+    registry: 426946630837.dkr.ecr.us-east-1.amazonaws.com
+
+accessModel:
+  iamMode: provision
+  eksAccessMode: namespace-scoped
+  jenkins:
+    serviceAccount:
+      state: provision
+      name: oracle-jenkins
+      namespace: oracle-horizon-platform
+    runtimeRole:
+      state: existing
+      roleArn: "arn:aws:iam::921570400913:role/JenkinsRuntimeRole"
+  backend:
+    serviceAccount:
+      state: provision
+      name: oracle-backend
+      namespace: oracle-horizon-platform
+    validationRole:
+      state: existing
+      roleArn: "arn:aws:iam::921570400913:role/BackendValidationRole"
+  validation:
+    backendPreflightEnforced: true
+    installerValidatesRoles: true
+
+sharedServices:
+  artifactBucket:
+    state: provision
+    deletionPolicy: retain
+    name: oracle-devsecops-artifacts-921570400913-us-east-1
+  applicationEcr:
+    state: provision
+    deletionPolicy: retain
+    registryAccountId: "921570400913"
+    registry: 921570400913.dkr.ecr.us-east-1.amazonaws.com
+    repositoryName: oracle-devsecops-apps
+
+environmentCatalog:
+  source: generated-from-environments
+
+components:
+  frontend:
+    enabled: true
+    image: "426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/frontend:1.4.26"
+  backend:
+    enabled: true
+    image: "426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.33"
+  jenkins:
+    enabled: true
+    image: "426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/jenkins:1.0.8"
+  sonarqube:
+    enabled: true
+    image: "426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/sonarqube:10.4-community"
+  trivy:
+    enabled: true
+    image: "426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/trivy-scanner:1.1.2"
+  opa:
+    enabled: true
+    image: "426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/opa-scanner:1.0.1"
+  openldap:
+    enabled: true
+  keycloak:
+    enabled: true
+
+environments:
+  - name: DEV
+    displayName: Development
+    enabled: true
+    accountTier: nonprod
+    terraform: { stateKey: horizon-installer/dev/terraform.tfstate }
+    aws: { accountId: "921570400913", region: us-east-1 }
+    foundation:
+      vpc: { state: provision, deletionPolicy: retain, vpcId: "", subnetIds: [] }
+      dns: { state: disabled, deletionPolicy: retain, baseDomain: "" }
+      kms: { state: provision, deletionPolicy: retain, keyArn: "" }
+      artifactBucket: { state: provision, deletionPolicy: retain, name: oracle-devsecops-artifacts-921570400913-us-east-1 }
+      applicationEcr: { state: provision, deletionPolicy: retain, registryAccountId: "921570400913", registry: 921570400913.dkr.ecr.us-east-1.amazonaws.com, repositoryName: oracle-devsecops-apps, repositoryTemplate: oracle-devsecops-apps }
+      secretsManager: { state: provision, deletionPolicy: retain, secretPrefix: /horizon/oracle/dev }
+      acm: { state: disabled, deletionPolicy: retain, certificateArn: "" }
+    iam:
+      mode: provision
+      deployRole:
+        state: provision
+        deletionPolicy: retain
+        roleName: OracleHorizonNonProdDeployRole
+        roleArn: "arn:aws:iam::921570400913:role/OracleHorizonNonProdDeployRole"
+      sourceRole: { state: disabled, deletionPolicy: retain, roleArn: "" }
+      targetRole: { state: disabled, deletionPolicy: retain, roleArn: "" }
+    eks:
+      state: provision
+      deletionPolicy: retain
+      clusterName: oracle-DEV-eks
+      kubernetesVersion: "1.35"
+      endpointPublicAccess: true
+      ebsCsiDriver: { state: provision, deletionPolicy: retain, roleName: OracleHorizonEbsCsiRole }
+      ingressController: { state: provision, deletionPolicy: retain }
+      nodeGroup:
+        state: provision
+        deletionPolicy: retain
+        name: oracle-nonprod-ng
+        roleName: OracleHorizonNonprodNodeRole
+        instanceTypes: [t3.small]
+        desiredSize: 1
+        minSize: 1
+        maxSize: 2
+      namespace: { state: provision, deletionPolicy: retain, strategy: fixed, template: oracle-demo-app-dev }
+      accessEntry: { state: provision, deletionPolicy: retain, policyArn: "arn:aws:eks::aws:cluster-access-policy/AmazonEKSEditPolicy", scopeType: namespace }
+    runtime: { isDeployable: true, requiresApproval: false }
+
+  - name: QA
+    displayName: Quality Assurance
+    enabled: true
+    accountTier: nonprod
+    terraform: { stateKey: horizon-installer/qa/terraform.tfstate }
+    aws: { accountId: "921570400913", region: us-east-1 }
+    foundation:
+      # QA reuses the shared non-prod EKS cluster, artifact bucket, and ECR.
+      vpc: { state: disabled, deletionPolicy: retain, vpcId: "", subnetIds: [] }
+      dns: { state: disabled, deletionPolicy: retain, baseDomain: "" }
+      kms: { state: disabled, deletionPolicy: retain, keyArn: "" }
+      artifactBucket: { state: existing, deletionPolicy: retain, name: oracle-devsecops-artifacts-921570400913-us-east-1 }
+      applicationEcr: { state: existing, deletionPolicy: retain, registryAccountId: "921570400913", registry: 921570400913.dkr.ecr.us-east-1.amazonaws.com, repositoryName: oracle-devsecops-apps, repositoryTemplate: oracle-devsecops-apps }
+      secretsManager: { state: provision, deletionPolicy: retain, secretPrefix: /horizon/oracle/qa }
+      acm: { state: disabled, deletionPolicy: retain, certificateArn: "" }
+    iam:
+      mode: provision
+      deployRole:
+        state: existing
+        deletionPolicy: retain
+        roleName: OracleHorizonNonProdDeployRole
+        roleArn: "arn:aws:iam::921570400913:role/OracleHorizonNonProdDeployRole"
+      sourceRole: { state: disabled, deletionPolicy: retain, roleArn: "" }
+      targetRole: { state: disabled, deletionPolicy: retain, roleArn: "" }
+    eks:
+      state: existing
+      deletionPolicy: retain
+      clusterName: oracle-QA-eks
+      kubernetesVersion: "1.35"
+      endpointPublicAccess: true
+      ebsCsiDriver: { state: existing, deletionPolicy: retain }
+      ingressController: { state: existing, deletionPolicy: retain }
+      nodeGroup: { state: existing, deletionPolicy: retain, instanceTypes: [t3.small], desiredSize: 1, minSize: 1, maxSize: 2 }
+      namespace: { state: provision, deletionPolicy: retain, strategy: fixed, template: oracle-demo-app-qa }
+      accessEntry: { state: provision, deletionPolicy: retain, policyArn: "arn:aws:eks::aws:cluster-access-policy/AmazonEKSEditPolicy", scopeType: namespace }
+    runtime: { isDeployable: true, requiresApproval: false }
+
+  - name: STAGE
+    displayName: Stage
+    enabled: true
+    accountTier: nonprod
+    terraform: { stateKey: horizon-installer/stage/terraform.tfstate }
+    aws: { accountId: "921570400913", region: us-east-1 }
+    foundation:
+      # STAGE reuses the shared non-prod EKS cluster, artifact bucket, and ECR.
+      vpc: { state: disabled, deletionPolicy: retain, vpcId: "", subnetIds: [] }
+      dns: { state: disabled, deletionPolicy: retain, baseDomain: "" }
+      kms: { state: disabled, deletionPolicy: retain, keyArn: "" }
+      artifactBucket: { state: existing, deletionPolicy: retain, name: oracle-devsecops-artifacts-921570400913-us-east-1 }
+      applicationEcr: { state: existing, deletionPolicy: retain, registryAccountId: "921570400913", registry: 921570400913.dkr.ecr.us-east-1.amazonaws.com, repositoryName: oracle-devsecops-apps, repositoryTemplate: oracle-devsecops-apps }
+      secretsManager: { state: provision, deletionPolicy: retain, secretPrefix: /horizon/oracle/stage }
+      acm: { state: disabled, deletionPolicy: retain, certificateArn: "" }
+    iam:
+      mode: provision
+      deployRole:
+        state: existing
+        deletionPolicy: retain
+        roleName: OracleHorizonNonProdDeployRole
+        roleArn: "arn:aws:iam::921570400913:role/OracleHorizonNonProdDeployRole"
+      sourceRole: { state: disabled, deletionPolicy: retain, roleArn: "" }
+      targetRole: { state: disabled, deletionPolicy: retain, roleArn: "" }
+    eks:
+      state: existing
+      deletionPolicy: retain
+      clusterName: oracle-STAGE-eks
+      kubernetesVersion: "1.35"
+      endpointPublicAccess: true
+      ebsCsiDriver: { state: existing, deletionPolicy: retain }
+      ingressController: { state: existing, deletionPolicy: retain }
+      nodeGroup: { state: existing, deletionPolicy: retain, instanceTypes: [t3.small], desiredSize: 1, minSize: 1, maxSize: 2 }
+      namespace: { state: provision, deletionPolicy: retain, strategy: fixed, template: oracle-demo-app-stage }
+      accessEntry: { state: provision, deletionPolicy: retain, policyArn: "arn:aws:eks::aws:cluster-access-policy/AmazonEKSEditPolicy", scopeType: namespace }
+    runtime: { isDeployable: true, requiresApproval: false }
+
+  - name: PROD
+    displayName: Production
+    # Keep production disabled during the first no-DNS trial smoke test.
+    # Enable after the prod account is bootstrapped and cross-account promotion
+    # roles are created/approved by the client security team.
+    enabled: false
+    accountTier: prod
+    terraform: { stateKey: horizon-installer/prod/terraform.tfstate }
+    aws: { accountId: "859925122079", region: us-east-1 }
+    foundation:
+      vpc: { state: provision, deletionPolicy: retain, vpcId: "", subnetIds: [] }
+      dns: { state: disabled, deletionPolicy: retain, baseDomain: "" }
+      kms: { state: provision, deletionPolicy: retain, keyArn: "" }
+      artifactBucket: { state: provision, deletionPolicy: retain, name: oracle-prod-devsecops-artifacts-859925122079-us-east-1 }
+      applicationEcr: { state: provision, deletionPolicy: retain, registryAccountId: "859925122079", registry: 859925122079.dkr.ecr.us-east-1.amazonaws.com, repositoryName: oracle-devsecops-apps, repositoryTemplate: oracle-devsecops-apps }
+      secretsManager: { state: provision, deletionPolicy: retain, secretPrefix: /horizon/oracle/prod }
+      acm: { state: disabled, deletionPolicy: retain, certificateArn: "" }
+    iam:
+      mode: validation-only
+      deployRole: { state: disabled, deletionPolicy: retain, roleArn: "" }
+      sourceRole:
+        state: existing
+        deletionPolicy: retain
+        roleArn: "arn:aws:iam::921570400913:role/OracleHorizonProdPromotionSourceRole"
+      targetRole:
+        state: existing
+        deletionPolicy: retain
+        roleArn: "arn:aws:iam::859925122079:role/OracleHorizonProdPromotionTargetRole"
+    eks:
+      state: provision
+      deletionPolicy: retain
+      clusterName: oracle-prod-eks
+      kubernetesVersion: "1.35"
+      endpointPublicAccess: true
+      ebsCsiDriver: { state: provision, deletionPolicy: retain, roleName: OracleHorizonProdEbsCsiRole }
+      ingressController: { state: provision, deletionPolicy: retain }
+      nodeGroup:
+        state: provision
+        deletionPolicy: retain
+        name: oracle-prod-ng
+        roleName: OracleHorizonProdNodeRole
+        instanceTypes: [t3.small]
+        desiredSize: 1
+        minSize: 1
+        maxSize: 2
+      namespace: { state: provision, deletionPolicy: retain, strategy: fixed, template: oracle-demo-app-prod }
+      accessEntry: { state: provision, deletionPolicy: retain, policyArn: "arn:aws:eks::aws:cluster-access-policy/AmazonEKSEditPolicy", scopeType: namespace }
+    runtime: { isDeployable: false, requiresApproval: true }
