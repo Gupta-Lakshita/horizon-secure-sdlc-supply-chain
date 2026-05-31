@@ -382,6 +382,8 @@ resource "null_resource" "application_namespace" {
     interpreter = ["/usr/bin/env", "bash", "-c"]
     command     = <<-EOT
       set -euo pipefail
+      export KUBECONFIG="$(mktemp "$${TMPDIR:-/tmp}/horizon-kubeconfig.XXXXXX")"
+      trap 'rm -f "$${KUBECONFIG}"' EXIT
       aws eks update-kubeconfig --region "${self.triggers.aws_region}" --name "${self.triggers.cluster_name}" >/dev/null
       kubectl create namespace "${self.triggers.namespace_name}" --dry-run=client -o yaml | kubectl apply -f -
       kubectl label namespace "${self.triggers.namespace_name}" \
@@ -397,6 +399,8 @@ resource "null_resource" "application_namespace" {
     interpreter = ["/usr/bin/env", "bash", "-c"]
     command     = <<-EOT
       set -euo pipefail
+      export KUBECONFIG="$(mktemp "$${TMPDIR:-/tmp}/horizon-kubeconfig.XXXXXX")"
+      trap 'rm -f "$${KUBECONFIG}"' EXIT
       aws eks update-kubeconfig --region "${self.triggers.aws_region}" --name "${self.triggers.cluster_name}" >/dev/null
       kubectl delete namespace "${self.triggers.namespace_name}" --ignore-not-found=true
     EOT
@@ -483,6 +487,8 @@ resource "null_resource" "ingress_nginx" {
     interpreter = ["/usr/bin/env", "bash", "-c"]
     command     = <<-EOT
       set -euo pipefail
+      export KUBECONFIG="$(mktemp "$${TMPDIR:-/tmp}/horizon-kubeconfig.XXXXXX")"
+      trap 'rm -f "$${KUBECONFIG}"' EXIT
       aws eks update-kubeconfig --region "${self.triggers.aws_region}" --name "${self.triggers.cluster_name}" >/dev/null
       helm repo add ingress-nginx "${self.triggers.repository}" >/dev/null 2>&1 || true
       helm repo update ingress-nginx >/dev/null
@@ -498,6 +504,8 @@ resource "null_resource" "ingress_nginx" {
     interpreter = ["/usr/bin/env", "bash", "-c"]
     command     = <<-EOT
       set -euo pipefail
+      export KUBECONFIG="$(mktemp "$${TMPDIR:-/tmp}/horizon-kubeconfig.XXXXXX")"
+      trap 'rm -f "$${KUBECONFIG}"' EXIT
       aws eks update-kubeconfig --region "${self.triggers.aws_region}" --name "${self.triggers.cluster_name}" >/dev/null
       helm uninstall "${self.triggers.release_name}" --namespace "${self.triggers.namespace}" >/dev/null 2>&1 || true
     EOT
