@@ -406,7 +406,7 @@ resource "null_resource" "application_namespace" {
 }
 
 resource "null_resource" "eks_access_entry" {
-  count = var.create_eks_access_entry && local.effective_deploy_role_arn != "" ? 1 : 0
+  count = var.create_eks_access_entry && (var.create_deploy_role || var.deploy_role_arn != "") ? 1 : 0
 
   triggers = {
     cluster_name  = var.eks_cluster_name
