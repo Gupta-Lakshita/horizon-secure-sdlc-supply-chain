@@ -227,14 +227,12 @@ spec:
               subPath: environment-catalog.json
               readOnly: true
           readinessProbe:
-            httpGet:
-              path: /license/status
+            tcpSocket:
               port: http
             initialDelaySeconds: 15
             periodSeconds: 15
           livenessProbe:
-            httpGet:
-              path: /license/status
+            tcpSocket:
               port: http
             initialDelaySeconds: 45
             periodSeconds: 30

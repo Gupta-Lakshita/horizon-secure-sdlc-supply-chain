@@ -42,7 +42,7 @@ lifecycle:
   defaultDeletionPolicy: retain
 
 client:
-  id: oracle
+  id: Oracle
   name: "Oracle"
   industry: technology
   dataBoundary: client-hosted
@@ -213,7 +213,7 @@ environments:
         deletionPolicy: retain
         name: oracle-nonprod-ng
         roleName: OracleHorizonNonprodNodeRole
-        instanceTypes: [t3.large]
+        instanceTypes: [m7i-flex.large]
         desiredSize: 1
         minSize: 1
         maxSize: 2
