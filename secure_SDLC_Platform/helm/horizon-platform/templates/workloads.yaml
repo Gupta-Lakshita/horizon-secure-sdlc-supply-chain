@@ -17,6 +17,7 @@
 {{- $identity := default dict $values.identity -}}
 {{- $ldap := default dict $identity.ldap -}}
 {{- $backendSecretName := default "horizon-backend-secrets" $platform.backendSecretName -}}
+{{- $jenkinsCredentialsSecretName := default "horizon-jenkins-credentials" $jenkins.credentialsSecretName -}}
 {{- $jenkinsPath := default "/" $platformHosts.jenkinsPath -}}
 {{- $imagePullSecrets := default (default list $values.imagePullSecrets) $platform.imagePullSecrets -}}
 {{- if default true $frontend.enabled }}
@@ -133,15 +134,13 @@ spec:
             - name: JENKINS_USER
               valueFrom:
                 secretKeyRef:
-                  name: {{ $backendSecretName | quote }}
-                  key: JENKINS_USER
-                  optional: true
+                  name: {{ $jenkinsCredentialsSecretName | quote }}
+                  key: JENKINS_SERVICE_USER
             - name: JENKINS_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: {{ $backendSecretName | quote }}
-                  key: JENKINS_TOKEN
-                  optional: true
+                  name: {{ $jenkinsCredentialsSecretName | quote }}
+                  key: JENKINS_SERVICE_TOKEN
             - name: GITHUB_WEBHOOK_SECRET
               valueFrom:
                 secretKeyRef:
@@ -316,9 +315,39 @@ spec:
                   name: horizon-enterprise-config
                   key: JENKINS_RUNTIME_ROLE_ARN
                   optional: true
+            - name: HORIZON_JENKINS_SECURITY_ENABLED
+              value: {{ default true $jenkins.securityEnabled | quote }}
+            - name: JENKINS_ADMIN_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $jenkinsCredentialsSecretName | quote }}
+                  key: JENKINS_ADMIN_USER
+            - name: JENKINS_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $jenkinsCredentialsSecretName | quote }}
+                  key: JENKINS_ADMIN_PASSWORD
+            - name: JENKINS_SERVICE_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $jenkinsCredentialsSecretName | quote }}
+                  key: JENKINS_SERVICE_USER
+            - name: JENKINS_SERVICE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $jenkinsCredentialsSecretName | quote }}
+                  key: JENKINS_SERVICE_PASSWORD
+            - name: JENKINS_SERVICE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $jenkinsCredentialsSecretName | quote }}
+                  key: JENKINS_SERVICE_TOKEN
           volumeMounts:
             - name: jenkins-home
               mountPath: /var/jenkins_home
+            - name: jenkins-security
+              mountPath: /var/jenkins_home/init.groovy.d/01-horizon-security.groovy
+              subPath: 01-horizon-security.groovy
           readinessProbe:
             httpGet:
               path: {{ if and $jenkinsPath (ne $jenkinsPath "/") }}{{ printf "%s/login" $jenkinsPath | quote }}{{ else }}"/login"{{ end }}
@@ -337,6 +366,9 @@ spec:
         - name: jenkins-home
           persistentVolumeClaim:
             claimName: horizon-jenkins-home
+        - name: jenkins-security
+          configMap:
+            name: horizon-jenkins-security
 ---
 apiVersion: v1
 kind: Service

@@ -125,6 +125,6 @@ signed entitlement.
 
 ## Jenkins Note
 
-Jenkins image `1.0.8` is a hardened derivative of `ankur1825/horizon-jenkins:1.0.7`. It removes the static bootstrap Groovy admin script and validates the required CI tools on the runtime path. Authentication must be configured through Helm/JCasC/LDAP at deployment time.
+Jenkins image `1.0.8` is a hardened derivative of `ankur1825/horizon-jenkins:1.0.7`. It removes the static baked-in `admin/admin123` bootstrap and validates the required CI tools on the runtime path. Authentication is configured at deployment time through the Helm-managed Jenkins credentials Secret and startup security bootstrap; clients can later replace that with LDAP/JCasC/SSO according to their enterprise identity model.
 
 For the full operational workflow, see [Secure Product Distribution Runbook](secure-product-distribution-runbook.md).

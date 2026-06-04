@@ -1,0 +1,86 @@
+{{- $components := default dict .Values.components -}}
+{{- $jenkins := default dict $components.jenkins -}}
+{{- if default true $jenkins.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: horizon-jenkins-security
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: horizon-jenkins
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+data:
+  01-horizon-security.groovy: |
+    import hudson.model.User
+    import hudson.security.FullControlOnceLoggedInAuthorizationStrategy
+    import hudson.security.HudsonPrivateSecurityRealm
+    import jenkins.model.Jenkins
+    import jenkins.security.apitoken.ApiTokenProperty
+
+    def env = System.getenv()
+    def securityEnabled = (env.get("HORIZON_JENKINS_SECURITY_ENABLED") ?: "true").toBoolean()
+    if (!securityEnabled) {
+      println("[horizon] Jenkins security bootstrap disabled by configuration")
+      return
+    }
+
+    def required = { name ->
+      def value = env.get(name)
+      if (value == null || value.trim().isEmpty()) {
+        throw new IllegalStateException("[horizon] Missing required Jenkins bootstrap env var: ${name}")
+      }
+      value
+    }
+
+    def adminUser = required("JENKINS_ADMIN_USER")
+    def adminPassword = required("JENKINS_ADMIN_PASSWORD")
+    def serviceUser = required("JENKINS_SERVICE_USER")
+    def servicePassword = required("JENKINS_SERVICE_PASSWORD")
+    def serviceToken = required("JENKINS_SERVICE_TOKEN")
+
+    def jenkins = Jenkins.get()
+    def realm = jenkins.getSecurityRealm()
+    if (!(realm instanceof HudsonPrivateSecurityRealm)) {
+      realm = new HudsonPrivateSecurityRealm(false, false, null)
+      jenkins.setSecurityRealm(realm)
+      println("[horizon] Configured Jenkins private security realm")
+    }
+
+    def ensureAccount = { String id, String password ->
+      def existing = realm.getUser(id)
+      if (existing == null) {
+        realm.createAccount(id, password)
+        println("[horizon] Created Jenkins account: ${id}")
+      } else {
+        def user = User.getById(id, false)
+        def details = user?.getProperty(HudsonPrivateSecurityRealm.Details.class)
+        if (details != null) {
+          details.updatePassword(password)
+          user.save()
+          println("[horizon] Updated Jenkins account credentials: ${id}")
+        }
+      }
+    }
+
+    ensureAccount(adminUser, adminPassword)
+    ensureAccount(serviceUser, servicePassword)
+
+    def strategy = new FullControlOnceLoggedInAuthorizationStrategy()
+    strategy.setAllowAnonymousRead(false)
+    jenkins.setAuthorizationStrategy(strategy)
+
+    def apiUser = User.getById(serviceUser, true)
+    def tokenProperty = apiUser.getProperty(ApiTokenProperty.class)
+    if (tokenProperty == null) {
+      tokenProperty = new ApiTokenProperty()
+      apiUser.addProperty(tokenProperty)
+    }
+
+    tokenProperty.tokenStore.revokeAllTokens()
+    tokenProperty.tokenStore.addFixedNewToken("horizon-backend", serviceToken)
+    apiUser.save()
+    jenkins.save()
+
+    println("[horizon] Jenkins security bootstrap completed")
+{{- end }}

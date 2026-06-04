@@ -204,6 +204,10 @@ components:
   jenkins:
     enabled: true
     image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/jenkins:1.0.8
+    securityEnabled: true
+    credentialsSecretName: horizon-jenkins-credentials
+    adminUser: horizon-admin
+    serviceUser: horizon-backend
     sharedLibrary:
       source: private-git # private-git | release-bundle | baked-in-image
       repository: git@github.com:ankur1825/jenkins-shared-library.git

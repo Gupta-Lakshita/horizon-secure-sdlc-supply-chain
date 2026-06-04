@@ -21,8 +21,8 @@ The recommended enterprise model is:
 
 | Component | Horizon private ECR image |
 | --- | --- |
-| Frontend | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/frontend:1.4.26` |
-| Backend | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.33` |
+| Frontend | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/frontend:1.4.27` |
+| Backend | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.34` |
 | License service | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/license-management-service:0.1.9` |
 | Jenkins | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/jenkins:1.0.8` |
 | SonarQube mirror | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/sonarqube:10.4-community` |

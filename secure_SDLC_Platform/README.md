@@ -29,6 +29,7 @@ The product code remains in the existing backend, frontend, and Jenkins shared-l
 - `docs/client-values-reference.md`: YAML structure reference for Environment Catalog, generic LDAP/AD role mapping, and product image settings.
 - `docs/aws-iam-eks-prerequisites.md`: client AWS IAM, Jenkins IRSA, deploy-role, EKS access-entry, and namespace-scoped prerequisites.
 - `docs/validation-only-namespace-scoped-access.md`: enterprise paid-client access model for validation-only IAM, Jenkins IRSA, and namespace-scoped EKS deployment.
+- `docs/jenkins-security-bootstrap.md`: Jenkins login/API-token bootstrap, backend service token wiring, and client verification steps.
 - `docs/client-hosted-test-plan.md`: end-to-end validation flow for a simulated client.
 - `docs/license-contract.md`: first backend/Jenkins license contract.
 - `docs/client-onboarding-trial-paid-enterprise-playbook.md`: product-owner onboarding, licensing, infrastructure, and commercialization playbook for trial, paid, and enterprise clients.
@@ -84,7 +85,7 @@ bash secure_SDLC_Platform/scripts/trial-readiness.sh \
 
 Remove `--skip-aws` when the client AWS profile is configured and existing-resource checks should run.
 
-Start with `docs/00-client-documentation-index.md` for the recommended client reading order. See `docs/client-enterprise-architecture.md` for the conceptual architecture, `docs/installer-runbook.md` for the full installation guide, `docs/trial-installer-readiness-checklist.md` for the trial readiness process, `docs/generic-hybrid-installer-lifecycle.md` for lifecycle commands, `docs/client-values-reference.md` for the current YAML structure, `docs/aws-iam-eks-prerequisites.md` for client AWS prerequisites, `docs/validation-only-namespace-scoped-access.md` for the enterprise access model, and `docs/build-release-deployment-runbook.md` for the build, validate, release promotion, and deployment workflow.
+Start with `docs/00-client-documentation-index.md` for the recommended client reading order. See `docs/client-enterprise-architecture.md` for the conceptual architecture, `docs/installer-runbook.md` for the full installation guide, `docs/trial-installer-readiness-checklist.md` for the trial readiness process, `docs/generic-hybrid-installer-lifecycle.md` for lifecycle commands, `docs/client-values-reference.md` for the current YAML structure, `docs/aws-iam-eks-prerequisites.md` for client AWS prerequisites, `docs/validation-only-namespace-scoped-access.md` and `docs/jenkins-security-bootstrap.md` for the enterprise access model, and `docs/build-release-deployment-runbook.md` for the build, validate, release promotion, and deployment workflow.
 
 ## Current Hardened Product Image Contract
 
@@ -92,8 +93,8 @@ Trial and enterprise installs should use Horizon private ECR image references, n
 
 | Component | Private ECR image |
 | --- | --- |
-| Frontend | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/frontend:1.4.26` |
-| Backend | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.33` |
+| Frontend | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/frontend:1.4.27` |
+| Backend | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.34` |
 | License service | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/license-management-service:0.1.9` |
 | Jenkins | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/jenkins:1.0.8` |
 | SonarQube mirror | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/sonarqube:10.4-community` |

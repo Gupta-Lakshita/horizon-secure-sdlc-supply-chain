@@ -162,6 +162,10 @@ components:
   jenkins:
     enabled: true
     image: "426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/jenkins:1.0.8"
+    securityEnabled: true
+    credentialsSecretName: horizon-jenkins-credentials
+    adminUser: oracle.admin
+    serviceUser: horizon-backend
   sonarqube:
     enabled: true
     image: "426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/sonarqube:10.4-community"
