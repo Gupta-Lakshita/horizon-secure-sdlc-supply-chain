@@ -164,6 +164,14 @@ license:
 
 identity:
   mode: client-oidc
+  # Optional bootstrap users/emails for first install. These users must still
+  # authenticate successfully through LDAP/IdP, but receive platform-admin until
+  # enterprise group mappings are fully wired. Keep empty after onboarding.
+  bootstrapPlatformAdmins: []
+  # Optional role grants keyed by Horizon role, for example:
+  # bootstrapRoleGrants:
+  #   developer: ["dev.user@client.com"]
+  bootstrapRoleGrants: {}
   keycloak:
     deploy: true
   ldap:
@@ -189,10 +197,10 @@ identity:
 components:
   frontend:
     enabled: true
-    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/frontend:1.4.26
+    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/frontend:1.4.27
   backend:
     enabled: true
-    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.33
+    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.34
   jenkins:
     enabled: true
     image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/jenkins:1.0.8

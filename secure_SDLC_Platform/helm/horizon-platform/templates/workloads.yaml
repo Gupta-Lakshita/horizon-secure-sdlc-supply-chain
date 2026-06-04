@@ -197,6 +197,10 @@ spec:
               value: {{ default "memberOf" $ldap.userGroupAttribute | quote }}
             - name: LDAP_ROLE_GROUP_MAPPINGS
               value: {{ default dict $ldap.roleGroupMappings | toJson | quote }}
+            - name: RBAC_BOOTSTRAP_PLATFORM_ADMINS
+              value: {{ default list $identity.bootstrapPlatformAdmins | join "," | quote }}
+            - name: RBAC_BOOTSTRAP_ROLE_GRANTS
+              value: {{ default dict $identity.bootstrapRoleGrants | toJson | quote }}
             - name: ENTERPRISE_LICENSE_ENFORCEMENT_ENABLED
               value: {{ default false $license.enforcementEnabled | quote }}
             - name: ENTERPRISE_CLIENT_ID

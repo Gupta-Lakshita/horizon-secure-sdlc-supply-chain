@@ -82,6 +82,10 @@ identity:
   # enterprise rollout, switch this to existing-idp/existing-ldap and map the
   # client's real AD/LDAP groups.
   mode: provisioned-keycloak-openldap
+  # First-install bootstrap admin. This still requires valid LDAP login; it only
+  # bridges the gap until the client's admin group membership is fully wired.
+  bootstrapPlatformAdmins:
+    - oracle.admin
   ldap:
     enabled: true
     roleGroupMappings:
@@ -151,10 +155,10 @@ environmentCatalog:
 components:
   frontend:
     enabled: true
-    image: "426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/frontend:1.4.26"
+    image: "426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/frontend:1.4.27"
   backend:
     enabled: true
-    image: "426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.33"
+    image: "426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.34"
   jenkins:
     enabled: true
     image: "426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/jenkins:1.0.8"
