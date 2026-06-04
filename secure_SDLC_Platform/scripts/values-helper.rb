@@ -16,6 +16,8 @@ def usage!
       values-helper.rb state-tfvars --file <values.yaml>
       values-helper.rb backend-config --file <values.yaml> --scope <platform|environment> [--environment QA]
       values-helper.rb catalog-payload --file <values.yaml> [--environment QA] [--terraform-output outputs.json]
+      values-helper.rb deploy-role-arns --file <values.yaml>
+      values-helper.rb get-env --file <values.yaml> --environment QA --path eks.clusterName
       values-helper.rb get --file <values.yaml> --path installer.namespace
   USAGE
   exit 1
@@ -347,10 +349,20 @@ def tfvars(values, env_name)
     deploy_role_arn: dig_path(env, "iam.deployRole.roleArn"),
     deploy_role_name: dig_path(env, "iam.deployRole.roleName") || "",
     jenkins_runtime_role_arn: dig_path(values, "accessModel.jenkins.runtimeRole.roleArn"),
+    backend_validation_role_arn: dig_path(values, "accessModel.backend.validationRole.roleArn"),
     create_deploy_role: state_of(dig_path(env, "iam.deployRole")) == "provision",
     deletion_protection: dig_path(values, "lifecycle.deletionProtection") != false
   }
   puts JSON.pretty_generate(result)
+end
+
+def deploy_role_arns(values)
+  environments(values).each do |env|
+    next unless enabled_environment?(env)
+
+    role_arn = dig_path(env, "iam.deployRole.roleArn")
+    puts role_arn if role_arn.to_s != ""
+  end
 end
 
 def state_tfvars(values)
@@ -487,6 +499,11 @@ when "tfvars" then validate_values(values, args[:environment]); tfvars(values, a
 when "state-tfvars" then validate_values(values, args[:environment]); state_tfvars(values)
 when "backend-config" then validate_values(values, args[:environment]); backend_config(values, args[:scope], args[:environment])
 when "catalog-payload" then validate_values(values, args[:environment]); catalog_payload(values, args[:environment], load_terraform_outputs(args[:terraform_output]))
+when "deploy-role-arns" then validate_values(values, args[:environment]); deploy_role_arns(values)
+when "get-env"
+  env = env_or_exit(values, args[:environment])
+  value = dig_path(env, args[:path])
+  puts(value.is_a?(Hash) || value.is_a?(Array) ? JSON.pretty_generate(value) : value) unless value.nil?
 when "get"
   value = dig_path(values, args[:path])
   puts(value.is_a?(Hash) || value.is_a?(Array) ? JSON.pretty_generate(value) : value) unless value.nil?

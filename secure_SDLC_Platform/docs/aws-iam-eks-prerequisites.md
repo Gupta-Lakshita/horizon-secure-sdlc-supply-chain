@@ -6,11 +6,12 @@
 2. [Required Roles](#required-roles)
 3. [Jenkins Runtime Role](#jenkins-runtime-role)
 4. [Deployment Role](#deployment-role)
-5. [Namespace-Scoped EKS Access](#namespace-scoped-eks-access)
-6. [Migrating an Existing Cluster-Scoped Role](#migrating-an-existing-cluster-scoped-role)
-7. [Environment Catalog Mapping](#environment-catalog-mapping)
-8. [Preflight Validation Checklist](#preflight-validation-checklist)
-9. [Client Responsibility Matrix](#client-responsibility-matrix)
+5. [Installer IRSA Trust Reconciliation](#installer-irsa-trust-reconciliation)
+6. [Namespace-Scoped EKS Access](#namespace-scoped-eks-access)
+7. [Migrating an Existing Cluster-Scoped Role](#migrating-an-existing-cluster-scoped-role)
+8. [Environment Catalog Mapping](#environment-catalog-mapping)
+9. [Preflight Validation Checklist](#preflight-validation-checklist)
+10. [Client Responsibility Matrix](#client-responsibility-matrix)
 
 ## Purpose
 
@@ -152,6 +153,47 @@ Trust policy for a non-prod deploy role:
 ```
 
 If the backend uses the same runtime identity as Jenkins for a demo, the second statement can point to the Jenkins runtime role or be omitted. For enterprise clients, keep backend validation and Jenkins runtime separate when possible.
+
+## Installer IRSA Trust Reconciliation
+
+For client-hosted installs where Horizon provisions or manages the platform IAM model, the platform phase reconciles trust policies automatically:
+
+```bash
+bash secure_SDLC_Platform/scripts/install.sh \
+  --phase platform \
+  --environment DEV \
+  -f secure_SDLC_Platform/examples/client-hybrid-onboarding-values.yaml \
+  --auto-approve
+```
+
+The installer discovers the live EKS OIDC issuer for the selected platform cluster and updates:
+
+- Jenkins runtime role trust to allow `system:serviceaccount:<platform-namespace>:<jenkins-service-account>` through `sts:AssumeRoleWithWebIdentity`.
+- Backend validation role trust to allow `system:serviceaccount:<platform-namespace>:<backend-service-account>` through `sts:AssumeRoleWithWebIdentity`.
+- Environment deploy role trust to allow both Jenkins runtime and backend validation roles through `sts:AssumeRole`.
+
+This fixes the common bootstrap problem where a client recreates an EKS cluster and the IAM roles still trust an old OIDC provider ID. The UI symptom usually looks like:
+
+```text
+Environment Not Ready
+Validation runtime cannot assume deployment role ...
+AccessDenied when calling the AssumeRoleWithWebIdentity operation
+```
+
+For strict enterprise validation-only mode, Horizon does not mutate client-owned IAM unless explicitly enabled:
+
+```yaml
+accessModel:
+  iamMode: validation-only
+  reconcileManagedTrustPolicies: false
+```
+
+In that mode, the client cloud team must apply the trust policies manually after the EKS cluster exists. To let the installer update only these Horizon runtime/deploy role trust policies, set:
+
+```yaml
+accessModel:
+  reconcileManagedTrustPolicies: true
+```
 
 Minimum AWS permission policy for build/deploy roles:
 

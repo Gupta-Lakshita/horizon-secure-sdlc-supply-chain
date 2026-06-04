@@ -51,6 +51,7 @@ locals {
   subnet_ids                = var.create_vpc ? module.vpc[0].public_subnets : var.existing_subnet_ids
   effective_deploy_role_arn = var.create_deploy_role ? aws_iam_role.deploy[0].arn : var.deploy_role_arn
   access_namespaces         = var.eks_access_scope_type == "namespace" && var.namespace_name != "" ? [var.namespace_name] : []
+  deploy_role_trust_arns    = compact([var.jenkins_runtime_role_arn, var.backend_validation_role_arn])
 }
 
 data "aws_iam_policy_document" "deploy_assume_role" {
@@ -61,7 +62,7 @@ data "aws_iam_policy_document" "deploy_assume_role" {
 
     principals {
       type        = "AWS"
-      identifiers = [var.jenkins_runtime_role_arn]
+      identifiers = local.deploy_role_trust_arns
     }
   }
 }

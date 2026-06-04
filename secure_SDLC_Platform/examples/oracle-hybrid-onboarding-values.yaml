@@ -105,7 +105,7 @@ platform:
     # infra phase. Run DEV infra first, update kubeconfig, then run platform.
     state: provision
     deletionPolicy: retain
-    name: oracle-nonprod-eks
+    name: oracle-DEV-eks
     namespace: oracle-horizon-platform
     ingressClassName: nginx
     storageClassName: gp3
@@ -117,6 +117,7 @@ platform:
 accessModel:
   iamMode: provision
   eksAccessMode: namespace-scoped
+  reconcileManagedTrustPolicies: true
   jenkins:
     serviceAccount:
       state: provision

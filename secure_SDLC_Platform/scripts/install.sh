@@ -161,6 +161,152 @@ reconcile_environment_placeholder_secret() {
   fi
 }
 
+role_name_from_arn() {
+  local role_arn="$1"
+  echo "${role_arn##*/}"
+}
+
+account_id_from_arn() {
+  local role_arn="$1"
+  echo "${role_arn}" | cut -d: -f5
+}
+
+write_irsa_trust_policy() {
+  local output_file="$1"
+  local provider_arn="$2"
+  local issuer="$3"
+  local service_account_namespace="$4"
+  local service_account_name="$5"
+
+  ruby -rjson -e '
+    provider_arn, issuer, namespace, service_account = ARGV
+    puts JSON.pretty_generate({
+      "Version" => "2012-10-17",
+      "Statement" => [
+        {
+          "Sid" => "AllowHorizonServiceAccountIRSA",
+          "Effect" => "Allow",
+          "Principal" => { "Federated" => provider_arn },
+          "Action" => "sts:AssumeRoleWithWebIdentity",
+          "Condition" => {
+            "StringEquals" => {
+              "#{issuer}:aud" => "sts.amazonaws.com",
+              "#{issuer}:sub" => "system:serviceaccount:#{namespace}:#{service_account}"
+            }
+          }
+        }
+      ]
+    })
+  ' "${provider_arn}" "${issuer}" "${service_account_namespace}" "${service_account_name}" > "${output_file}"
+}
+
+write_deploy_role_trust_policy() {
+  local output_file="$1"
+  shift
+
+  ruby -rjson -e '
+    principals = ARGV.reject { |value| value.to_s.empty? }.uniq
+    puts JSON.pretty_generate({
+      "Version" => "2012-10-17",
+      "Statement" => [
+        {
+          "Sid" => "AllowHorizonRuntimeAssumeRole",
+          "Effect" => "Allow",
+          "Principal" => { "AWS" => principals },
+          "Action" => "sts:AssumeRole"
+        }
+      ]
+    })
+  ' "$@" > "${output_file}"
+}
+
+reconcile_irsa_role_trust() {
+  local role_arn="$1"
+  local service_account_namespace="$2"
+  local service_account_name="$3"
+  local issuer="$4"
+  local label="$5"
+  [[ -n "${role_arn}" && -n "${service_account_namespace}" && -n "${service_account_name}" ]] || return 0
+
+  local account_id role_name provider_arn policy_file
+  account_id="$(account_id_from_arn "${role_arn}")"
+  role_name="$(role_name_from_arn "${role_arn}")"
+  provider_arn="arn:aws:iam::${account_id}:oidc-provider/${issuer}"
+  policy_file="$(mktemp "${TMPDIR:-/tmp}/horizon-irsa-trust.XXXXXX.json")"
+
+  write_irsa_trust_policy "${policy_file}" "${provider_arn}" "${issuer}" "${service_account_namespace}" "${service_account_name}"
+  echo "Reconciling ${label} IRSA trust on ${role_name} for ${service_account_namespace}/${service_account_name}"
+  aws iam update-assume-role-policy --role-name "${role_name}" --policy-document "file://${policy_file}" >/dev/null
+  rm -f "${policy_file}"
+}
+
+reconcile_deploy_role_trust() {
+  local jenkins_role_arn="$1"
+  local backend_role_arn="$2"
+  [[ -n "${jenkins_role_arn}" || -n "${backend_role_arn}" ]] || return 0
+
+  local role_arn role_name policy_file
+  while IFS= read -r role_arn; do
+    [[ -n "${role_arn}" ]] || continue
+    role_name="$(role_name_from_arn "${role_arn}")"
+    policy_file="$(mktemp "${TMPDIR:-/tmp}/horizon-deploy-trust.XXXXXX.json")"
+    write_deploy_role_trust_policy "${policy_file}" "${jenkins_role_arn}" "${backend_role_arn}"
+    echo "Reconciling deploy role trust on ${role_name} for Horizon runtime roles"
+    aws iam update-assume-role-policy --role-name "${role_name}" --policy-document "file://${policy_file}" >/dev/null
+    rm -f "${policy_file}"
+  done < <(ruby "${HELPER}" deploy-role-arns --file "${VALUES_FILE}" | sort -u)
+}
+
+reconcile_platform_iam_trust() {
+  local iam_mode reconcile_setting
+  iam_mode="$(ruby "${HELPER}" get --file "${VALUES_FILE}" --path accessModel.iamMode)"
+  reconcile_setting="$(ruby "${HELPER}" get --file "${VALUES_FILE}" --path accessModel.reconcileManagedTrustPolicies)"
+  if [[ "${iam_mode}" == "validation-only" && "${reconcile_setting}" != "true" ]]; then
+    echo "Skipping IAM trust reconciliation because accessModel.iamMode=validation-only."
+    return
+  fi
+  [[ "${reconcile_setting}" != "false" ]] || { echo "Skipping IAM trust reconciliation because accessModel.reconcileManagedTrustPolicies=false."; return; }
+
+  command -v aws >/dev/null || { echo "Missing required command: aws" >&2; exit 1; }
+
+  local namespace cluster_name region issuer_url issuer
+  local jenkins_sa_namespace jenkins_sa_name jenkins_role_arn
+  local backend_sa_namespace backend_sa_name backend_role_arn
+
+  namespace="$(ruby "${HELPER}" get --file "${VALUES_FILE}" --path installer.namespace)"
+  namespace="${namespace:-horizon-platform}"
+
+  if [[ -n "${ENVIRONMENT}" ]]; then
+    cluster_name="$(ruby "${HELPER}" get-env --file "${VALUES_FILE}" --environment "${ENVIRONMENT}" --path eks.clusterName)"
+    region="$(ruby "${HELPER}" get-env --file "${VALUES_FILE}" --environment "${ENVIRONMENT}" --path aws.region)"
+  else
+    cluster_name=""
+    region=""
+  fi
+  [[ -n "${cluster_name}" ]] || cluster_name="$(ruby "${HELPER}" get --file "${VALUES_FILE}" --path platform.cluster.name)"
+  [[ -n "${region}" ]] || region="$(ruby "${HELPER}" get --file "${VALUES_FILE}" --path platform.region)"
+  [[ -n "${cluster_name}" && -n "${region}" ]] || { echo "Skipping IAM trust reconciliation because platform cluster name or region is missing."; return; }
+
+  issuer_url="$(aws eks describe-cluster --region "${region}" --name "${cluster_name}" --query 'cluster.identity.oidc.issuer' --output text)"
+  issuer="${issuer_url#https://}"
+
+  jenkins_sa_namespace="$(ruby "${HELPER}" get --file "${VALUES_FILE}" --path accessModel.jenkins.serviceAccount.namespace)"
+  jenkins_sa_namespace="${jenkins_sa_namespace:-${namespace}}"
+  jenkins_sa_name="$(ruby "${HELPER}" get --file "${VALUES_FILE}" --path accessModel.jenkins.serviceAccount.name)"
+  jenkins_sa_name="${jenkins_sa_name:-jenkins}"
+  jenkins_role_arn="$(ruby "${HELPER}" get --file "${VALUES_FILE}" --path accessModel.jenkins.runtimeRole.roleArn)"
+
+  backend_sa_namespace="$(ruby "${HELPER}" get --file "${VALUES_FILE}" --path accessModel.backend.serviceAccount.namespace)"
+  backend_sa_namespace="${backend_sa_namespace:-${namespace}}"
+  backend_sa_name="$(ruby "${HELPER}" get --file "${VALUES_FILE}" --path accessModel.backend.serviceAccount.name)"
+  backend_sa_name="${backend_sa_name:-horizon-backend}"
+  backend_role_arn="$(ruby "${HELPER}" get --file "${VALUES_FILE}" --path accessModel.backend.validationRole.roleArn)"
+
+  reconcile_irsa_role_trust "${jenkins_role_arn}" "${jenkins_sa_namespace}" "${jenkins_sa_name}" "${issuer}" "Jenkins runtime"
+  reconcile_irsa_role_trust "${backend_role_arn}" "${backend_sa_namespace}" "${backend_sa_name}" "${issuer}" "Backend validation"
+  reconcile_deploy_role_trust "${jenkins_role_arn}" "${backend_role_arn}"
+}
+
 run_state() {
   echo "== Terraform state backend phase =="
   local tfvars_file="${GENERATED_DIR}/state-backend.auto.tfvars.json"
@@ -209,6 +355,7 @@ run_platform() {
     return
   fi
   command -v kubectl >/dev/null || { echo "Missing required command: kubectl" >&2; exit 1; }
+  reconcile_platform_iam_trust
   kubectl create namespace "${namespace}" --dry-run=client -o yaml | kubectl apply -f -
   helm upgrade --install "${release}" "${ROOT_DIR}/helm/horizon-platform" --namespace "${namespace}" --values "${VALUES_FILE}"
 }

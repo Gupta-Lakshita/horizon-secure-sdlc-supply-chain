@@ -222,6 +222,11 @@ variable "jenkins_runtime_role_arn" {
   default = ""
 }
 
+variable "backend_validation_role_arn" {
+  type    = string
+  default = ""
+}
+
 variable "create_deploy_role" {
   type    = bool
   default = false
