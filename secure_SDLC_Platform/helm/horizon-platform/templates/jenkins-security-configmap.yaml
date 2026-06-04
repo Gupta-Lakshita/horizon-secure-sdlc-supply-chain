@@ -16,7 +16,7 @@ data:
     import hudson.security.FullControlOnceLoggedInAuthorizationStrategy
     import hudson.security.HudsonPrivateSecurityRealm
     import jenkins.model.Jenkins
-    import jenkins.security.apitoken.ApiTokenProperty
+    import jenkins.security.ApiTokenProperty
 
     def env = System.getenv()
     def securityEnabled = (env.get("HORIZON_JENKINS_SECURITY_ENABLED") ?: "true").toBoolean()
@@ -53,13 +53,7 @@ data:
         realm.createAccount(id, password)
         println("[horizon] Created Jenkins account: ${id}")
       } else {
-        def user = User.getById(id, false)
-        def details = user?.getProperty(HudsonPrivateSecurityRealm.Details.class)
-        if (details != null) {
-          details.updatePassword(password)
-          user.save()
-          println("[horizon] Updated Jenkins account credentials: ${id}")
-        }
+        println("[horizon] Jenkins account already exists: ${id}")
       }
     }
 
