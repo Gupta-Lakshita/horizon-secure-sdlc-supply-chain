@@ -50,8 +50,12 @@ client:
 license:
   enforcementEnabled: true
   mode: online-sync
-  syncEndpoint: https://license.horizonrelevance.com/api/v1/licenses/sync
+  # Demo endpoint uses HTTP until license.horizonrelevance.com has a trusted
+  # public certificate. Production clients should use HTTPS with ACM/valid CA.
+  syncEndpoint: http://license.horizonrelevance.com/api/v1/licenses/sync
   clientId: oracle
+  installationId: oracle-trial-nonprod-001
+  publicKeyId: arn:aws:kms:us-east-1:426946630837:key/164f168a-6697-4a4d-9160-76bb02f2dd2b
   activationTokenSecretName: horizon-license-activation
   renewalCheckHours: 24
 
@@ -159,7 +163,7 @@ components:
     image: "426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/frontend:1.4.27"
   backend:
     enabled: true
-    image: "426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.35"
+    image: "426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.37"
   jenkins:
     enabled: true
     image: "426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/jenkins:1.0.8"

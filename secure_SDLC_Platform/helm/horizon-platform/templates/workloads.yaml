@@ -212,6 +212,8 @@ spec:
               value: {{ default (default "client" $values.client.id) $license.clientId | quote }}
             - name: ENTERPRISE_CLIENT_NAME
               value: {{ default "" $values.client.name | quote }}
+            - name: ENTERPRISE_INSTALLATION_ID
+              value: {{ default (printf "%s-%s" .Release.Name .Release.Namespace) $license.installationId | quote }}
             - name: ENTERPRISE_LICENSE_MODE
               value: {{ default "online-sync" $license.mode | quote }}
             - name: ENTERPRISE_LICENSE_SYNC_ENDPOINT
@@ -224,12 +226,19 @@ spec:
                   name: {{ default "horizon-license-activation" $license.activationTokenSecretName | quote }}
                   key: {{ default "activationToken" $license.activationTokenSecretKey | quote }}
                   optional: true
+            - name: ENTERPRISE_LICENSE_PUBLIC_KEY_FILE
+              value: /etc/horizon/license/publicKeyPem
+            - name: ENTERPRISE_LICENSE_PUBLIC_KEY_ID
+              value: {{ default (default "" $runner.publicKeyId) $license.publicKeyId | quote }}
           volumeMounts:
             - name: backend-data
               mountPath: /app/data
             - name: environment-catalog
               mountPath: /app/config/environment-catalog.json
               subPath: environment-catalog.json
+              readOnly: true
+            - name: license-public-key
+              mountPath: /etc/horizon/license
               readOnly: true
           readinessProbe:
             tcpSocket:
@@ -251,6 +260,13 @@ spec:
             items:
               - key: ENVIRONMENT_CATALOG_JSON
                 path: environment-catalog.json
+        - name: license-public-key
+          secret:
+            secretName: {{ default "horizon-license-public-key" $runner.publicKeySecretName | quote }}
+            optional: true
+            items:
+              - key: {{ default "publicKeyPem" $runner.publicKeySecretKey | quote }}
+                path: publicKeyPem
 ---
 apiVersion: v1
 kind: Service

@@ -153,6 +153,9 @@ license:
   # Stable key assigned by Horizon during onboarding. This is identity, not an
   # entitlement. Trial/paid/enterprise terms are returned by signed license sync.
   clientId: example-client
+  # Public KMS key id returned by Horizon's public-key endpoint. This is not a
+  # secret; it selects the matching public verification key during rotation.
+  publicKeyId: ""
   # Store the actual activation token in this Kubernetes Secret or in the
   # client's external secret manager. Never commit the raw token to values.
   activationTokenSecretName: horizon-license-activation
@@ -200,7 +203,7 @@ components:
     image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/frontend:1.4.27
   backend:
     enabled: true
-    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.35
+    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.37
   jenkins:
     enabled: true
     image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/jenkins:1.0.8
