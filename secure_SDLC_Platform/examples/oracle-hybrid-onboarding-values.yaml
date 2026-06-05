@@ -180,6 +180,8 @@ components:
   runner:
     enabled: true
     image: "426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/runner:0.1.0"
+    executionPlanEndpoint: http://license.horizonrelevance.com/api/v1/execution/plans
+    eventEndpoint: http://license.horizonrelevance.com/api/v1/execution/events
   sonarqube:
     enabled: true
     image: "426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/sonarqube:10.4-community"
