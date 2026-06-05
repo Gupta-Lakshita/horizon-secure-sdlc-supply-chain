@@ -309,7 +309,7 @@ components:
   frontend:
     image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/frontend:1.4.27
   backend:
-    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.34
+    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.35
   jenkins:
     image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/jenkins:1.0.8
     securityEnabled: true
