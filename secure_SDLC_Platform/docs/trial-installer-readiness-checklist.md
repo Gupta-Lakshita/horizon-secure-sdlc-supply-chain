@@ -168,6 +168,6 @@ Capture these items before allowing client engineers to run pipelines:
 | `license.activationTokenSecretName is required` | Online license sync is enabled without a token secret reference. | Create the secret and set the secret name in values. |
 | Existing IAM role not found | Role ARN or role name is wrong, or client has not created the role. | Client cloud admin creates role or updates values. |
 | `Deployment role cannot describe EKS cluster` | Deploy role lacks `eks:DescribeCluster`. | Add `eks:DescribeCluster` for the target cluster ARN. |
-| `Unable to validate EKS access policies` | Backend validation role lacks EKS access-entry read permissions. | Add read permissions for `eks:ListAccessEntries`, `eks:DescribeAccessEntry`, and `eks:ListAssociatedAccessPolicies`. |
+| `Unable to validate EKS access policies` | The environment deploy role lacks EKS access-entry read permissions after the backend successfully assumes it. | Add read permissions for `eks:ListAccessEntries`, `eks:DescribeAccessEntry`, `eks:ListAssociatedAccessPolicies`, and `eks:ListAccessPolicies`. |
 | Catalog sync TLS error | Local trust store cannot verify backend certificate. | Use a public ACM certificate, set `catalogSync.caBundlePath`, or use the insecure demo flag only for internal testing. |
 | Helm render fails | Values file has missing component image or malformed chart value. | Run `install.sh --phase platform --dry-run` and fix the reported chart value. |

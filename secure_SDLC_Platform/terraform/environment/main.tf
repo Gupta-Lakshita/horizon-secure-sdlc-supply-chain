@@ -129,6 +129,17 @@ resource "aws_iam_role_policy" "deploy" {
         Effect   = "Allow"
         Action   = "eks:DescribeCluster"
         Resource = "arn:aws:eks:${var.aws_region}:${var.aws_account_id}:cluster/${var.eks_cluster_name}"
+      },
+      {
+        Sid    = "EksAccessPolicyReadOnlyValidation"
+        Effect = "Allow"
+        Action = [
+          "eks:DescribeAccessEntry",
+          "eks:ListAccessEntries",
+          "eks:ListAssociatedAccessPolicies",
+          "eks:ListAccessPolicies"
+        ]
+        Resource = "*"
       }
     ]
   })
