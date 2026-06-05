@@ -184,7 +184,7 @@ identity:
     userBaseDn: ""
     bindSecretName: ""
     groupBaseDn: ""
-    groupSearchFilter: "(&(objectClass=group)(member={user_dn}))"
+    groupSearchFilter: "(&(objectClass=groupOfNames)(member={user_dn}))"
     groupMemberAttribute: member
     groupNameAttribute: cn
     userGroupAttribute: memberOf
@@ -203,7 +203,7 @@ components:
     image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/frontend:1.4.27
   backend:
     enabled: true
-    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.37
+    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.38
   jenkins:
     enabled: true
     image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/jenkins:1.0.8
