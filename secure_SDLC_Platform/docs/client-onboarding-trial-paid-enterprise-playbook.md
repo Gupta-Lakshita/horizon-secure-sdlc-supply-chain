@@ -41,7 +41,7 @@ Recommended ownership:
 | S3 artifact buckets | Client | Test reports, `image.json`, and deployment metadata stay in client S3. |
 | Source code access | Client | GitHub/GitLab/Bitbucket access is read-only and scoped. |
 | Horizon product images | Horizon | Delivered through private registry access or mirrored into client ECR. |
-| Jenkins shared library | Horizon | Delivered through private GitHub deploy key, release bundle, or packaged image. |
+| Horizon Thin Runner | Horizon | Client Jenkins calls the runner; Horizon returns signed execution plans after license validation. |
 | License | Horizon | Signed license controls trial/paid/enterprise entitlements. |
 | Identity | Client preferred | Use client IdP first; deploy Keycloak/OpenLDAP only if needed. |
 
@@ -107,7 +107,7 @@ Install these platform components:
 1. Horizon frontend.
 2. Horizon backend.
 3. Jenkins controller and agents.
-4. Jenkins shared library.
+4. Horizon Thin Runner.
 5. Findings dashboard storage/integration.
 6. Optional SonarQube if the client does not already have one.
 7. Keycloak and OpenLDAP only when the client does not provide an IdP.
@@ -448,13 +448,10 @@ Recommended delivery approach:
 2. Publish release images to private repositories.
 3. Use expiring registry credentials for trial customers.
 4. Prefer mirroring Horizon product images into the client's ECR during onboarding.
-5. Provide Helm charts, Terraform modules, and signed release bundles.
-6. Provide Jenkins shared library as one of:
-   - Private GitHub repository with read-only deploy key.
-   - Versioned release bundle.
-   - Packaged inside the Jenkins controller image.
+5. Provide Helm charts and Terraform modules.
+6. Use Horizon Thin Runner for protected pipeline execution plans instead of client GitHub access to Horizon shared-library source.
 7. Sign product images and provide SBOMs for enterprise customers.
-8. Rotate or revoke trial registry credentials when the trial ends.
+8. Rotate or revoke trial registry credentials and execution-plan entitlement when the trial ends.
 
 Client source code remains inside the client build environment. Horizon Relevance should not need to clone or store client source outside the client AWS account.
 

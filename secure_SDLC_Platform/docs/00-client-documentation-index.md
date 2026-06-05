@@ -36,40 +36,43 @@ This index is the recommended sequence for client platform admins, developers, Q
 7. [Secure Product Distribution Runbook](secure-product-distribution-runbook.md)  
    Use this to grant private ECR access, verify product images, and revoke distribution access safely.
 
-8. [Phase 11: Secure Product Distribution](phase-11-secure-product-distribution.md)
-   Use this for signed images, SBOM evidence, private ECR governance, and signed Jenkins rule/template bundles.
+8. [Thin Client Runner Architecture](thin-client-runner-architecture.md)
+   Read this to understand why client Jenkins no longer needs access to Horizon private shared-library source code, and how signed execution plans protect Horizon IP.
 
-9. [License Contract](license-contract.md)
+9. [Phase 11: Secure Product Distribution](phase-11-secure-product-distribution.md)
+   Use this for signed images, SBOM evidence, private ECR governance, and Thin Runner execution-plan distribution.
+
+10. [License Contract](license-contract.md)
    Understand license payloads, online sync, trial expiration, installation binding, and Jenkins/backend enforcement.
 
-10. [License Operations And Commercial Readiness](license-operations-and-commercial-readiness.md)
+11. [License Operations And Commercial Readiness](license-operations-and-commercial-readiness.md)
    Understand scheduled online sync, trial-to-enterprise conversion, revocation, activation tokens, and low-cost enterprise readiness.
 
-11. [Production Control Plane Hardening](production-control-plane-hardening.md)
+12. [Production Control Plane Hardening](production-control-plane-hardening.md)
    Review the low-cost Horizon-owned control plane hardening path before moving to paid enterprise scale.
 
-12. [Client Demo, License, Upgrade, and Enterprise Operations Runbook](client-demo-license-and-enterprise-operations-runbook.md)
+13. [Client Demo, License, Upgrade, and Enterprise Operations Runbook](client-demo-license-and-enterprise-operations-runbook.md)
    Use this for the full client demo path: install/use the platform, sync license, configure catalog, build DEV, validate, promote QA/STAGE/PROD, and explain renewal/upgrade operations.
 
-13. [Jenkins Security Bootstrap](jenkins-security-bootstrap.md)
+14. [Jenkins Security Bootstrap](jenkins-security-bootstrap.md)
    Use this after platform installation to verify Jenkins login protection, retrieve the generated admin credential, and confirm the backend service API token.
 
-14. [Client Values Reference](client-values-reference.md)
+15. [Client Values Reference](client-values-reference.md)
    Use this when preparing `client-values.yaml` for full-provision, BYO, and hybrid infrastructure modes.
 
-15. [Generic Hybrid Installer Lifecycle](generic-hybrid-installer-lifecycle.md)
+16. [Generic Hybrid Installer Lifecycle](generic-hybrid-installer-lifecycle.md)
    Read this before running installer phases for state, infrastructure, platform, catalog sync, validation, and destroy.
 
-16. [Installer Runbook](installer-runbook.md)
+17. [Installer Runbook](installer-runbook.md)
     Follow this as the operational step-by-step installation guide.
 
-17. [Trial Installer Readiness Checklist](trial-installer-readiness-checklist.md)
+18. [Trial Installer Readiness Checklist](trial-installer-readiness-checklist.md)
     Run this before a real trial client starts using the platform. It covers non-destructive smoke testing, values validation, Terraform dry-runs, Helm render, catalog payload generation, and evidence capture.
 
-18. [Build, Release, and Deployment Runbook](build-release-deployment-runbook.md)
+19. [Build, Release, and Deployment Runbook](build-release-deployment-runbook.md)
     Use this after the platform is installed. It explains how engineers build once in DEV, validate the running app, and promote the same immutable image digest through QA, STAGE, and PROD.
 
-19. [Client Hosted Test Plan](client-hosted-test-plan.md)
+20. [Client Hosted Test Plan](client-hosted-test-plan.md)
     Use this to perform an end-to-end client simulation and capture test evidence.
 
 ## Downloadable Client Artifact

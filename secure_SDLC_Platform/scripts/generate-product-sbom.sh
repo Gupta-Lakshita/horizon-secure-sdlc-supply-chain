@@ -12,7 +12,7 @@ Purpose:
 
 Examples:
   bash secure_SDLC_Platform/scripts/generate-product-sbom.sh
-  bash secure_SDLC_Platform/scripts/generate-product-sbom.sh --image horizon/backend:1.4.33
+  bash secure_SDLC_Platform/scripts/generate-product-sbom.sh --image horizon/backend:1.4.34
 USAGE
 }
 

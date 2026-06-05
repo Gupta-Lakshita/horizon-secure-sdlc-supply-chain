@@ -1,167 +1,71 @@
 # Phase 11: Secure Product Distribution
 
-## Table of Contents
-
-1. Purpose
-2. Target Architecture
-3. Horizon Release Workflow
-4. Client Install Workflow
-5. Signed Images
-6. SBOM Evidence
-7. Private ECR Governance
-8. Signed Rule Bundles
-9. Verification Commands
-10. Operational Controls
-
 ## Purpose
 
-Phase 11 protects Horizon Relevance product intellectual property while still allowing a client to run the platform inside their own AWS account. The goal is not to pretend container images cannot be inspected after a client can pull them. The real control model is:
+Phase 11 protects Horizon Relevance intellectual property while still allowing clients to run the product inside their own AWS accounts. The client should be able to build, validate, promote, and deploy applications without receiving broad source-level access to Horizon's proprietary pipeline logic.
 
-- keep images in Horizon-owned private ECR;
-- grant pull access only to licensed client principals;
-- bind license entitlement to client account, installation, environment, and enabled services;
-- sign product images and publish SBOM evidence;
-- keep Jenkins rules, policy packs, and pipeline templates private or deliver them as signed bundles.
+## Recommended Enterprise Model
 
-## Target Architecture
+Use three layers together:
 
-```mermaid
-flowchart LR
-  HR["Horizon Release Account"] --> ECR["Private ECR Repositories"]
-  HR --> KMS["AWS KMS / Cosign Signing Key"]
-  HR --> SBOM["SBOM Evidence Store"]
-  HR --> Bundle["Signed Rule Bundle Store"]
-  License["Horizon License Service"] --> ClientBackend["Client-hosted Backend"]
-  ClientEKS["Client EKS Runtime"] --> ECR
-  ClientEKS --> Bundle
-  ClientBackend --> ClientEKS
-  ECR --> Pod["Frontend / Backend / Jenkins / Scanner Pods"]
-```
+1. Horizon-owned private ECR for product images.
+2. Signed product images, SBOM evidence, and release verification.
+3. Horizon Thin Runner for pipeline execution plans.
 
-## Horizon Release Workflow
+The old private shared-library model is no longer the recommended client distribution path. Jenkins should not need GitHub access to Horizon's private shared-library repository. Jenkins creates a generic wrapper job and calls the in-cluster `horizon-runner` service. The runner requests a signed execution plan from Horizon's licensed execution service and executes only the approved actions.
 
-1. Build product images in Horizon CI.
-2. Push images to Horizon private ECR.
-3. Generate SBOMs for each required image.
-4. Sign each required image with Cosign and a Horizon-controlled signing key.
-5. Package Jenkins rules/templates into a signed rule bundle.
-6. Verify image signatures and rule bundle signatures.
-7. Grant client ECR pull access only after the client has an active trial or paid entitlement.
-8. Publish the allowed image tags, rule bundle version, and public verification key to the client onboarding package.
+## What the Client Receives
 
-## Client Install Workflow
+| Artifact | Client receives? | Notes |
+| --- | --- | --- |
+| Product images | Yes | Pulled from Horizon private ECR or mirrored into client ECR. |
+| Helm chart / installer | Yes | Client-owned values drive infrastructure and platform install. |
+| License activation token | Yes, as a secret | Used to sync license and request execution plans. |
+| Public verification key | Yes | Used to verify signed licenses and runner execution plans. |
+| Jenkins shared-library source | No | Replaced by the Thin Runner execution-plan model. |
+| Horizon signing private key | Never | Remains in Horizon-controlled KMS/control plane. |
 
-1. Client receives an activation token from Horizon.
-2. Client runs the installer in their AWS account.
-3. Installer deploys the platform using Horizon private ECR images.
-4. Client backend syncs license from Horizon license service.
-5. Client backend verifies license signature using Horizon public key set.
-6. Jenkins validates the signed rule bundle before executing protected rules/templates.
-7. Developers use the product normally; they do not receive source code or AWS internals.
+## Image Distribution Controls
 
-## Signed Images
+Horizon grants pull access only to licensed AWS accounts and only for approved product repositories. Every release should include:
 
-Use `sign-product-images.sh` after images are pushed to Horizon private ECR:
+- immutable image tag and digest
+- SBOM artifact
+- product image vulnerability scan
+- Cosign or equivalent image signature
+- release notes and compatibility notes
 
-```bash
-bash secure_SDLC_Platform/scripts/sign-product-images.sh \
-  --key awskms://arn:aws:kms:us-east-1:<horizon-account-id>:key/<key-id> \
-  --yes
-```
+See [Private ECR Image Distribution](private-ecr-image-distribution.md) and [Secure Product Distribution Runbook](secure-product-distribution-runbook.md).
 
-Verify signatures before a release is handed to clients:
+## Thin Runner Controls
 
-```bash
-bash secure_SDLC_Platform/scripts/verify-product-signatures.sh \
-  --key awskms://arn:aws:kms:us-east-1:<horizon-account-id>:key/<key-id>
-```
+The runner protects business logic by moving decision-making to Horizon-controlled services:
 
-For production, clients should deploy images by digest whenever possible. Tags are useful for release selection, but digests provide immutability.
+1. Jenkins sends a normalized request to `horizon-runner`.
+2. `horizon-runner` calls Horizon's execution-plan endpoint with the client id, installation id, activation token, pipeline kind, and runtime parameters.
+3. Horizon validates the license, enabled features, allowed AWS account IDs, environments, and usage limits.
+4. Horizon returns a short-lived signed execution plan.
+5. The runner verifies the signature with the public key mounted in the client cluster.
+6. The runner executes only allowed actions and emits audit/usage events.
 
-## SBOM Evidence
+For details, see [Thin Client Runner Architecture](thin-client-runner-architecture.md).
 
-Generate SBOMs for all product images:
+## Revocation
 
-```bash
-bash secure_SDLC_Platform/scripts/generate-product-sbom.sh
-```
+For trial expiration or termination:
 
-The script writes evidence under:
+1. Suspend or revoke the client's license/activation token.
+2. Remove the client's AWS account from Horizon ECR repository policies.
+3. Disable execution-plan issuance for that installation.
+4. Confirm the client backend reports expired, suspended, or revoked license status.
 
-```text
-secure_SDLC_Platform/.generated/sbom/
-```
+## Production Readiness Checklist
 
-Preferred format is SPDX JSON using Syft. If Syft is unavailable, Trivy CycloneDX JSON is used.
-
-## Private ECR Governance
-
-Render a per-client ECR pull policy:
-
-```bash
-bash secure_SDLC_Platform/scripts/render-ecr-pull-policy.sh \
-  --principal-arn arn:aws:iam::<client-account-id>:role/<client-ecr-pull-role> \
-  --repository horizon/backend \
-  --expires-at 2026-06-30T23:59:59Z \
-  --output /tmp/horizon-backend-ecr-policy.json
-```
-
-Attach the rendered policy to the Horizon-owned ECR repository. Repeat per repository or automate it in Horizon release operations.
-
-Recommended controls:
-
-- one pull principal per client;
-- expiration aligned with license entitlement;
-- deny-by-default repository access;
-- CloudTrail monitoring for image pulls;
-- immediate policy removal when a license is suspended or revoked.
-
-## Signed Rule Bundles
-
-Jenkins shared library logic and security rules are the highest IP-risk area. For enterprise readiness, do not broadly expose the full rule repository. Package protected rules/templates into a signed bundle:
-
-```bash
-bash secure_SDLC_Platform/scripts/package-rule-bundle.sh \
-  --source /path/to/private/rules \
-  --version 2026.05.23 \
-  --signing-key awskms://arn:aws:kms:us-east-1:<horizon-account-id>:key/<key-id> \
-  --yes
-```
-
-Verify before installing into client Jenkins:
-
-```bash
-bash secure_SDLC_Platform/scripts/verify-rule-bundle.sh \
-  --bundle secure_SDLC_Platform/.generated/rule-bundles/horizon-rules-2026.05.23.tar.gz \
-  --manifest secure_SDLC_Platform/.generated/rule-bundles/horizon-rules-2026.05.23.manifest.json \
-  --key awskms://arn:aws:kms:us-east-1:<horizon-account-id>:key/<key-id>
-```
-
-## Verification Commands
-
-```bash
-bash secure_SDLC_Platform/scripts/verify-product-images.sh
-
-bash secure_SDLC_Platform/scripts/verify-product-images.sh --online
-
-bash secure_SDLC_Platform/scripts/generate-product-sbom.sh --help
-
-bash secure_SDLC_Platform/scripts/sign-product-images.sh --help
-
-bash secure_SDLC_Platform/scripts/package-rule-bundle.sh --help
-```
-
-## Operational Controls
-
-For each client trial or paid subscription, Horizon should record:
-
-- client account IDs allowed to pull images;
-- installation ID;
-- enabled products and pipelines;
-- allowed image release version;
-- allowed rule bundle version;
-- entitlement expiry date;
-- ECR policy IDs or repository policy change history;
-- license sync and activation audit events.
-
-This makes the platform commercially controllable without requiring Horizon to host or access the client source code.
+- Private ECR policies are account-scoped and time-bound where possible.
+- Client image pull roles have `ecr:GetAuthorizationToken` only in the client account.
+- Product images are signed and have SBOM evidence.
+- Jenkins jobs use runner mode, not private GitHub shared-library mode.
+- Runner has the Horizon public key mounted.
+- Runner activation token is stored in a Kubernetes Secret or external secrets manager.
+- Backend license sync is online and healthy.
+- Audit events are emitted for license sync, execution plan requests, and pipeline completion.

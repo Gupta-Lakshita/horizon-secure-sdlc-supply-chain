@@ -137,10 +137,19 @@ components:
   jenkins:
     enabled: true
     image: "426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/jenkins:1.0.8"
+    executionMode: runner
     securityEnabled: true
     credentialsSecretName: horizon-jenkins-credentials
     adminUser: horizon-admin
     serviceUser: horizon-backend
+    runner:
+      url: http://horizon-runner:8080
+      cliPath: /usr/local/bin/horizon-runner
+    sharedLibrary:
+      source: runner
+  runner:
+    enabled: true
+    image: "426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/runner:0.1.0"
 
 environments:
   - name: DEV

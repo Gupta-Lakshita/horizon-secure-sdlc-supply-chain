@@ -1,6 +1,7 @@
 # component	repository	tag	required
-frontend	horizon/frontend	1.4.26	true
-backend	horizon/backend	1.4.33	true
+frontend	horizon/frontend	1.4.27	true
+backend	horizon/backend	1.4.34	true
+runner	horizon/runner	0.1.0	true
 license-management-service	horizon/license-management-service	0.1.9	true
 jenkins	horizon/jenkins	1.0.8	true
 sonarqube	horizon/sonarqube	10.4-community	false

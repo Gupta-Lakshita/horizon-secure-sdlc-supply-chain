@@ -8,8 +8,9 @@ Horizon Relevance trial and enterprise deployments should pull product images fr
 
 | Component | Repository | Current tag |
 | --- | --- | --- |
-| Frontend | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/frontend` | `1.4.26` |
-| Backend | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend` | `1.4.33` |
+| Frontend | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/frontend` | `1.4.27` |
+| Backend | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend` | `1.4.34` |
+| Thin runner | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/runner` | `0.1.0` |
 | License service | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/license-management-service` | `0.1.9` |
 | Jenkins | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/jenkins` | `1.0.8` |
 | SonarQube mirror | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/sonarqube` | `10.4-community` |
@@ -46,7 +47,7 @@ Mitigations:
 - bind licenses to a generated installation ID
 - keep signing secrets and activation tokens in Kubernetes secrets
 - avoid baking customer secrets or static admin credentials into images
-- keep high-value rule packs and pipeline bundles license-gated where possible
+- keep proprietary pipeline logic behind Horizon-controlled signed execution plans
 - publish SBOM and vulnerability evidence for every approved product image
 - sign release images or release manifests before enterprise distribution
 
@@ -68,6 +69,7 @@ Apply the rendered policy to each approved Horizon product repository from the H
 for repo in \
   horizon/frontend \
   horizon/backend \
+  horizon/runner \
   horizon/jenkins \
   horizon/sonarqube \
   horizon/trivy-scanner \
@@ -102,7 +104,7 @@ bash secure_SDLC_Platform/scripts/verify-product-signatures.sh \
   --key awskms://arn:aws:kms:us-east-1:<horizon-account-id>:key/<key-id>
 ```
 
-For protected Jenkins rules/templates, use signed rule bundles instead of broad repository access. See [Phase 11: Secure Product Distribution](phase-11-secure-product-distribution.md).
+Do not grant client Jenkins direct GitHub access to Horizon's private Jenkins shared-library repository. Use the Horizon Thin Runner so Jenkins receives only a generic wrapper job and the runner requests signed execution plans from Horizon. See [Thin Client Runner Architecture](thin-client-runner-architecture.md).
 
 ## Trial License Binding
 

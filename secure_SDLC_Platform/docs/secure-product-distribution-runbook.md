@@ -23,6 +23,7 @@ The recommended enterprise model is:
 | --- | --- |
 | Frontend | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/frontend:1.4.27` |
 | Backend | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.34` |
+| Thin runner | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/runner:0.1.0` |
 | License service | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/license-management-service:0.1.9` |
 | Jenkins | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/jenkins:1.0.8` |
 | SonarQube mirror | `426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/sonarqube:10.4-community` |
@@ -58,6 +59,7 @@ Apply the policy to all approved repositories:
 for repo in \
   horizon/frontend \
   horizon/backend \
+  horizon/runner \
   horizon/jenkins \
   horizon/sonarqube \
   horizon/trivy-scanner \
@@ -114,17 +116,11 @@ bash secure_SDLC_Platform/scripts/verify-product-signatures.sh \
   --key awskms://arn:aws:kms:us-east-1:<horizon-account-id>:key/<key-id>
 ```
 
-Package a signed rules/templates bundle:
+## Protected Pipeline Logic
 
-```bash
-bash secure_SDLC_Platform/scripts/package-rule-bundle.sh \
-  --source /path/to/private/horizon-rules \
-  --version 2026.05.23 \
-  --signing-key awskms://arn:aws:kms:us-east-1:<horizon-account-id>:key/<key-id> \
-  --yes
-```
+Do not grant client Jenkins direct GitHub access to Horizon's private Jenkins shared-library repository. Client Jenkins should run generic wrapper jobs that call the in-cluster `horizon-runner` service. The runner requests short-lived signed execution plans from Horizon's control plane after license validation.
 
-See [Phase 11: Secure Product Distribution](phase-11-secure-product-distribution.md) for the full signed image, SBOM, private ECR, and signed rule bundle workflow.
+See [Thin Client Runner Architecture](thin-client-runner-architecture.md) and [Phase 11: Secure Product Distribution](phase-11-secure-product-distribution.md).
 
 ## Protection Boundaries
 
@@ -135,7 +131,7 @@ Private ECR controls distribution, not reverse engineering. Any party that can p
 - AWS account ID and installation ID binding
 - no static admin credentials baked into product images
 - no customer secrets in images
-- scanner/rule content distributed as protected release bundles where required
+- proprietary pipeline logic served through signed execution plans
 - public-key license verification, with Horizon retaining signing authority
 - audit events for license sync, usage reporting, upgrade requests, and revocation
 

@@ -655,13 +655,18 @@ components:
     enabled: true
     image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/jenkins:1.0.8
     securityEnabled: true
+    executionMode: runner
     credentialsSecretName: horizon-jenkins-credentials
     adminUser: horizon-admin
     serviceUser: horizon-backend
+    runner:
+      url: http://horizon-runner:8080
+      cliPath: /usr/local/bin/horizon-runner
     sharedLibrary:
-      source: private-git
-      repository: git@github.com:ankur1825/jenkins-shared-library.git
-      branch: main
+      source: runner
+  runner:
+    enabled: true
+    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/runner:0.1.0
   sonarqube:
     enabled: true
     image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/sonarqube:10.4-community

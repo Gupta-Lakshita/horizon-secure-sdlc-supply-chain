@@ -15,7 +15,7 @@ Examples:
     --key awskms://arn:aws:kms:us-east-1:426946630837:key/example --yes
 
   bash secure_SDLC_Platform/scripts/sign-product-images.sh \
-    --key env://COSIGN_PRIVATE_KEY --image horizon/backend:1.4.33 --yes
+    --key env://COSIGN_PRIVATE_KEY --image horizon/backend:1.4.34 --yes
 USAGE
 }
 

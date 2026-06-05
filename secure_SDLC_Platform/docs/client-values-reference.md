@@ -313,9 +313,13 @@ components:
   jenkins:
     image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/jenkins:1.0.8
     securityEnabled: true
+    executionMode: runner
     credentialsSecretName: horizon-jenkins-credentials
     adminUser: horizon-admin
     serviceUser: horizon-backend
+  runner:
+    enabled: true
+    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/runner:0.1.0
 ```
 
 For enterprise deployments, prefer one of these image delivery models:
