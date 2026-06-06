@@ -81,7 +81,7 @@ resource "aws_iam_role_policy" "deploy" {
 
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
+    Statement = concat([
       {
         Sid      = "EcrAuth"
         Effect   = "Allow"
@@ -141,7 +141,22 @@ resource "aws_iam_role_policy" "deploy" {
         ]
         Resource = "*"
       }
-    ]
+    ], local.kms_key_arn != "" ? [
+      {
+        Sid    = "ArtifactEncryptionKeyAccess"
+        Effect = "Allow"
+        Action = [
+          "kms:Decrypt",
+          "kms:DescribeKey",
+          "kms:Encrypt",
+          "kms:GenerateDataKey",
+          "kms:GenerateDataKeyWithoutPlaintext",
+          "kms:ReEncryptFrom",
+          "kms:ReEncryptTo"
+        ]
+        Resource = local.kms_key_arn
+      }
+    ] : [])
   })
 }
 

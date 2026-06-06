@@ -111,6 +111,8 @@ spec:
       labels:
         app.kubernetes.io/name: horizon-backend
         app.kubernetes.io/instance: {{ .Release.Name }}
+      annotations:
+        checksum/jenkins-credentials: {{ include (print $.Template.BasePath "/jenkins-credentials-secret.yaml") . | sha256sum }}
     spec:
       serviceAccountName: {{ default "horizon-backend" $backendSa.name }}
       securityContext:
@@ -309,6 +311,9 @@ spec:
       labels:
         app.kubernetes.io/name: horizon-jenkins
         app.kubernetes.io/instance: {{ .Release.Name }}
+      annotations:
+        checksum/jenkins-credentials: {{ include (print $.Template.BasePath "/jenkins-credentials-secret.yaml") . | sha256sum }}
+        checksum/jenkins-security: {{ include (print $.Template.BasePath "/jenkins-security-configmap.yaml") . | sha256sum }}
     spec:
       serviceAccountName: {{ default "jenkins" (default $jenkinsAccess.serviceAccountName $jenkinsSa.name) }}
       securityContext:
@@ -469,6 +474,12 @@ spec:
                   optional: true
             - name: HORIZON_RUNNER_MODE
               value: {{ default "signed-plan" $runner.mode | quote }}
+            - name: HORIZON_RUNNER_EXECUTE
+              value: {{ default true $runner.executeActions | quote }}
+            - name: HORIZON_KANIKO_IMAGE
+              value: {{ default "gcr.io/kaniko-project/executor:v1.23.2" $runner.kanikoImage | quote }}
+            - name: HORIZON_RUNNER_KEEP_BUILD_JOBS
+              value: {{ default false $runner.keepBuildJobs | quote }}
             - name: HORIZON_EXECUTION_PLAN_ENDPOINT
               value: {{ default "" $runner.executionPlanEndpoint | quote }}
             - name: HORIZON_EXECUTION_EVENT_ENDPOINT

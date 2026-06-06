@@ -245,6 +245,20 @@ Minimum AWS permission policy for build/deploy roles:
       "Resource": "arn:aws:s3:::<artifact-bucket>"
     },
     {
+      "Sid": "ArtifactEncryptionKeyAccess",
+      "Effect": "Allow",
+      "Action": [
+        "kms:Decrypt",
+        "kms:DescribeKey",
+        "kms:Encrypt",
+        "kms:GenerateDataKey",
+        "kms:GenerateDataKeyWithoutPlaintext",
+        "kms:ReEncryptFrom",
+        "kms:ReEncryptTo"
+      ],
+      "Resource": "arn:aws:kms:<region>:<account-id>:key/<artifact-ecr-secrets-key-id>"
+    },
+    {
       "Sid": "EksClusterDiscovery",
       "Effect": "Allow",
       "Action": [
@@ -278,7 +292,7 @@ Minimum AWS permission policy for build/deploy roles:
 }
 ```
 
-Remove `CreateRepository` if the client requires ECR repositories to be pre-created by platform/IaC only. Remove the Secrets Manager statement if production secret generation is not enabled.
+Remove `CreateRepository` if the client requires ECR repositories to be pre-created by platform/IaC only. Remove the Secrets Manager statement if production secret generation is not enabled. Keep `ArtifactEncryptionKeyAccess` whenever the artifact bucket, application ECR repository, or release evidence bucket uses a customer-managed KMS key; without `kms:GenerateDataKey`, S3 uploads fail before the image build can start.
 
 `EksClusterDiscovery` is required so Jenkins/backend can discover the target cluster before running `aws eks update-kubeconfig`. `EksAccessPolicyReadOnlyValidation` is required for Horizon preflight to confirm that the deploy role is mapped into EKS with namespace-scoped access. Without the read-only access-policy calls, the environment may show `ready_with_warnings` with `Unable to validate EKS access policies: AccessDeniedException` even when deployment might otherwise work.
 

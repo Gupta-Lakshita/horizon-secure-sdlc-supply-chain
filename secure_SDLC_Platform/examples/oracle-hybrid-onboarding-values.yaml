@@ -164,7 +164,7 @@ components:
     image: "426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/frontend:1.4.27"
   backend:
     enabled: true
-    image: "426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.38"
+    image: "426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.39"
   jenkins:
     enabled: true
     image: "426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/jenkins:1.0.8"
@@ -180,7 +180,10 @@ components:
       source: runner
   runner:
     enabled: true
-    image: "426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/runner:0.1.0"
+    image: "426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/runner:0.1.2"
+    executeActions: true
+    kanikoImage: gcr.io/kaniko-project/executor:v1.23.2
+    keepBuildJobs: false
     executionPlanEndpoint: http://license.horizonrelevance.com/api/v1/execution/plans
     eventEndpoint: http://license.horizonrelevance.com/api/v1/execution/events
   sonarqube:

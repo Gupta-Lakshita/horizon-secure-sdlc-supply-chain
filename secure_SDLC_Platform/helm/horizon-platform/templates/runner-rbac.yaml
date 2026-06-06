@@ -1,0 +1,50 @@
+{{- $components := default dict .Values.components -}}
+{{- $runner := default dict $components.runner -}}
+{{- $accessModel := default dict .Values.accessModel -}}
+{{- $jenkinsAccess := default dict $accessModel.jenkins -}}
+{{- $jenkinsSa := default dict $jenkinsAccess.serviceAccount -}}
+{{- if default true $runner.enabled }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: horizon-runner-build-orchestrator
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: horizon-runner
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create", "get", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: horizon-runner-build-orchestrator
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: horizon-runner
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ default "jenkins" (default $jenkinsAccess.serviceAccountName $jenkinsSa.name) }}
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: horizon-runner-build-orchestrator
+{{- end }}
