@@ -655,8 +655,7 @@ def execute_quality_ui(action: Dict[str, Any], context: Dict[str, Any]) -> None:
                 raise HTTPException(status_code=422, detail="No UI end-to-end npm script found. Expected test:e2e, e2e, or test:ui.")
             package = json.loads((source_dir / "package.json").read_text())
             deps = {**package.get("dependencies", {}), **package.get("devDependencies", {})}
-            chrome_path = os.getenv("PLAYWRIGHT_CHROME_EXECUTABLE_PATH", "")
-            if "@playwright/test" in deps and not (chrome_path and Path(chrome_path).exists()):
+            if "@playwright/test" in deps or "playwright" in deps:
                 run_command(["npx", "playwright", "install", "chromium"], cwd=source_dir, check=False)
             command = f"npm run {script}"
             result = run_command(["npm", "run", script], cwd=source_dir, env=env, check=False)

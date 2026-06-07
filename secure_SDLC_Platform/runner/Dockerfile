@@ -5,6 +5,7 @@ FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     NPM_CONFIG_CACHE=/tmp/npm-cache \
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
     PLAYWRIGHT_CHROME_EXECUTABLE_PATH=/usr/bin/chromium \
     HOME=/home/horizon \
     JMETER_HOME=/opt/apache-jmeter \
@@ -55,13 +56,14 @@ RUN set -eux; \
     kubectl version --client=true; \
     jmeter --version
 
-RUN npm install -g newman newman-reporter-htmlextra
+RUN npm install -g newman newman-reporter-htmlextra @playwright/test@1.44.1 \
+    && npx playwright install chromium
 
 COPY --from=trivy /usr/local/bin/trivy /usr/local/bin/trivy
 
 RUN useradd --create-home --uid 10001 horizon \
-    && mkdir -p /var/lib/horizon-runner /tmp/npm-cache \
-    && chown -R 10001:10001 /var/lib/horizon-runner /tmp/npm-cache /home/horizon
+    && mkdir -p /var/lib/horizon-runner /tmp/npm-cache /ms-playwright \
+    && chown -R 10001:10001 /var/lib/horizon-runner /tmp/npm-cache /ms-playwright /home/horizon
 
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt

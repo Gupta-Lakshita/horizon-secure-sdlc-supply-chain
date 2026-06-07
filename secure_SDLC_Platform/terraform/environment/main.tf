@@ -141,7 +141,7 @@ resource "aws_iam_role_policy" "deploy" {
         ]
         Resource = "*"
       }
-    ], local.kms_key_arn != "" ? [
+      ], local.kms_key_arn != "" ? [
       {
         Sid    = "ArtifactEncryptionKeyAccess"
         Effect = "Allow"
@@ -460,11 +460,20 @@ resource "null_resource" "eks_access_entry" {
         --type STANDARD >/dev/null
 
       if [ "${self.triggers.scope_type}" = "namespace" ] && [ -n "${self.triggers.namespaces}" ]; then
+        existing_namespaces="$$(aws eks list-associated-access-policies \
+          --cluster-name "${self.triggers.cluster_name}" \
+          --principal-arn "${self.triggers.principal_arn}" \
+          --query "associatedAccessPolicies[?policyArn=='${self.triggers.policy_arn}'].accessScope.namespaces[]" \
+          --output text 2>/dev/null || true)"
+        combined_namespaces="$$(printf "%s\n%s\n" "$${existing_namespaces}" "${self.triggers.namespaces}" \
+          | tr '\t,' '\n\n' \
+          | awk 'NF && !seen[$$0]++' \
+          | paste -sd, -)"
         aws eks associate-access-policy \
           --cluster-name "${self.triggers.cluster_name}" \
           --principal-arn "${self.triggers.principal_arn}" \
           --policy-arn "${self.triggers.policy_arn}" \
-          --access-scope "type=namespace,namespaces=${self.triggers.namespaces}" >/dev/null 2>&1 || true
+          --access-scope "type=namespace,namespaces=$${combined_namespaces}" >/dev/null 2>&1 || true
       else
         aws eks associate-access-policy \
           --cluster-name "${self.triggers.cluster_name}" \

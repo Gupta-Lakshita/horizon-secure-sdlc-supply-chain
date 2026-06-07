@@ -203,7 +203,7 @@ components:
     image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/frontend:1.4.27
   backend:
     enabled: true
-    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.39
+    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.41
   jenkins:
     enabled: true
     image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/jenkins:1.0.8
@@ -219,7 +219,7 @@ components:
       source: runner
   runner:
     enabled: true
-    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/runner:0.1.4
+    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/runner:0.1.5
     imagePullPolicy: Always
     replicas: 1
     servicePort: 8080
