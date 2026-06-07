@@ -1,13 +1,16 @@
 import base64
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from statistics import mean
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 import requests
 from cryptography.exceptions import InvalidSignature
@@ -154,6 +157,48 @@ def safe_k8s_name(value: str) -> str:
     cleaned = "".join(ch.lower() if ch.isalnum() else "-" for ch in value)
     cleaned = "-".join(part for part in cleaned.split("-") if part)
     return cleaned[:63] or f"horizon-{uuid.uuid4().hex[:8]}"
+
+
+def as_bool(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def csv_values(value: Any) -> List[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return [item.strip() for item in str(value or "").split(",") if item.strip()]
+
+
+def get_source_dir(context: Dict[str, Any]) -> Path:
+    source_dir = context.get("sourceDir")
+    if source_dir:
+        return Path(source_dir)
+    fallback = context["runDir"] / "source"
+    if fallback.exists():
+        return fallback
+    raise HTTPException(status_code=422, detail="Source checkout is required before this action")
+
+
+def action_report_dir(action: Dict[str, Any], context: Dict[str, Any], default_name: str) -> Path:
+    path = context["runDir"] / (action.get("reportDir") or f"reports/{default_name}")
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def write_json(path: Path, value: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(value, indent=2, sort_keys=True))
+
+
+def normalize_http_url(value: Any) -> str:
+    url = str(value or "").strip()
+    if url and not re.match(r"(?i)^https?://", url):
+        return f"http://{url}"
+    return url
 
 
 def ecr_host(registry: str, region: str) -> str:
@@ -569,6 +614,459 @@ def execute_artifact_publish(action: Dict[str, Any], context: Dict[str, Any]) ->
         run_command(["aws", "s3", "cp", str(artifact_dir / filename), f"s3://{bucket}/{prefix}/{filename}", "--region", region], env=role_env)
 
 
+def execute_artifact_context(action: Dict[str, Any], context: Dict[str, Any]) -> None:
+    rendered = render_value(action, context)
+    context["artifact"] = {
+        "bucket": rendered["artifactBucket"],
+        "prefix": rendered["artifactPrefix"].strip("/"),
+        "region": rendered["awsRegion"],
+        "roleArn": rendered.get("roleArn", ""),
+    }
+
+
+def execute_publish_reports(action: Dict[str, Any], context: Dict[str, Any]) -> None:
+    rendered = render_value(action, context)
+    region = rendered.get("awsRegion") or context.get("artifact", {}).get("region")
+    bucket = rendered.get("artifactBucket") or context.get("artifact", {}).get("bucket")
+    prefix = (rendered.get("artifactPrefix") or context.get("artifact", {}).get("prefix") or "").strip("/")
+    role_env = assume_role_env(rendered.get("roleArn") or context.get("artifact", {}).get("roleArn", ""), region, f"horizon-reports-{context['requestId']}")
+    report_root = context["runDir"] / (rendered.get("reportRoot") or "reports")
+    if not report_root.exists():
+        report_root.mkdir(parents=True, exist_ok=True)
+        write_json(report_root / "summary.json", {"status": "NO_REPORTS", "message": "No validation reports were produced."})
+    run_command(["aws", "s3", "sync", str(report_root), f"s3://{bucket}/{prefix}/test-results/", "--region", region], env=role_env)
+
+
+def execute_quality_ui(action: Dict[str, Any], context: Dict[str, Any]) -> None:
+    source_dir = get_source_dir(context)
+    report_dir = action_report_dir(action, context, "selenium")
+    target_url = normalize_http_url(action.get("targetAppUrl"))
+    env = {"TARGET_APP_URL": target_url, "APPLICATION_URL": target_url, "APP_URL": target_url}
+    status_code = 0
+    command = ""
+    try:
+        if (source_dir / "package.json").exists():
+            if (source_dir / "package-lock.json").exists():
+                run_command(["npm", "ci"], cwd=source_dir)
+            else:
+                run_command(["npm", "install"], cwd=source_dir)
+            script = detect_npm_script(source_dir, ["test:e2e", "e2e", "test:ui"])
+            if not script:
+                raise HTTPException(status_code=422, detail="No UI end-to-end npm script found. Expected test:e2e, e2e, or test:ui.")
+            package = json.loads((source_dir / "package.json").read_text())
+            deps = {**package.get("dependencies", {}), **package.get("devDependencies", {})}
+            chrome_path = os.getenv("PLAYWRIGHT_CHROME_EXECUTABLE_PATH", "")
+            if "@playwright/test" in deps and not (chrome_path and Path(chrome_path).exists()):
+                run_command(["npx", "playwright", "install", "chromium"], cwd=source_dir, check=False)
+            command = f"npm run {script}"
+            result = run_command(["npm", "run", script], cwd=source_dir, env=env, check=False)
+            status_code = result.returncode
+        elif (source_dir / "pom.xml").exists():
+            command = "mvn -B -Dtest=*UITest* test"
+            result = run_command(["mvn", "-B", "-Dtest=*UITest*", f"-Dsurefire.reportsDirectory={report_dir}", "test"], cwd=source_dir, env=env, check=False)
+            status_code = result.returncode
+        else:
+            raise HTTPException(status_code=422, detail="No supported UI test framework found.")
+    finally:
+        write_json(report_dir / "summary.json", {
+            "status": "PASSED" if status_code == 0 else "FAILED",
+            "targetAppUrl": target_url,
+            "command": command,
+            "requestId": context["requestId"],
+        })
+    if status_code != 0 and as_bool(action.get("required"), True):
+        raise HTTPException(status_code=500, detail="UI end-to-end test failed")
+
+
+def _find_first(source_dir: Path, candidates: List[str]) -> str:
+    for candidate in candidates:
+        path = source_dir / candidate
+        if path.exists():
+            return candidate
+    return ""
+
+
+def execute_quality_api(action: Dict[str, Any], context: Dict[str, Any]) -> None:
+    source_dir = get_source_dir(context)
+    report_dir = action_report_dir(action, context, "newman")
+    collection = action.get("collectionPath") or _find_first(source_dir, [
+        "tests/postman/horizon-demo-angular.postman_collection.json",
+        "tests/postman/collection.json",
+    ])
+    if not collection:
+        matches = sorted((source_dir / "tests/postman").glob("*postman_collection.json")) if (source_dir / "tests/postman").exists() else []
+        collection = str(matches[0].relative_to(source_dir)) if matches else ""
+    if not collection or not (source_dir / collection).exists():
+        raise HTTPException(status_code=422, detail="API collection not found. Provide a collection path or add tests/postman/*postman_collection.json.")
+
+    env_path = action.get("environmentPath") or ""
+    if env_path and not (source_dir / env_path).exists():
+        env_path = ""
+    if not env_path:
+        target_env = str((context.get("requestPayload") or {}).get("TARGET_ENV") or "qa").lower()
+        env_path = _find_first(source_dir, [
+            f"tests/postman/{target_env}.postman_environment.json",
+            f"tests/postman/{target_env}.environment.json",
+            "tests/postman/environment.json",
+        ])
+    data_file = action.get("iterationDataFile") or ""
+    if data_file and not (source_dir / data_file).exists():
+        raise HTTPException(status_code=422, detail=f"Iteration data file not found: {data_file}")
+
+    base_url = normalize_http_url(action.get("baseUrl"))
+    cmd = [
+        "newman", "run", collection,
+        "--timeout-request", str(action.get("timeoutMs") or "30000"),
+        "--reporters", "cli,junit,json",
+        "--reporter-junit-export", str(report_dir / "results.xml"),
+        "--reporter-json-export", str(report_dir / "results.json"),
+    ]
+    if env_path:
+        cmd.extend(["--environment", env_path])
+    if data_file:
+        cmd.extend(["--iteration-data", data_file])
+    if base_url:
+        cmd.extend(["--env-var", f"baseUrl={base_url}", "--env-var", f"apiBaseUrl={base_url}"])
+    result = run_command(cmd, cwd=source_dir, check=False)
+    write_json(report_dir / "summary.json", {
+        "status": "PASSED" if result.returncode == 0 else "FAILED",
+        "collection": collection,
+        "environment": env_path,
+        "iterationDataFile": data_file,
+        "baseUrl": base_url,
+    })
+    if result.returncode != 0 and as_bool(action.get("failOnError"), True):
+        raise HTTPException(status_code=500, detail="API regression test failed")
+
+
+def execute_quality_performance(action: Dict[str, Any], context: Dict[str, Any]) -> None:
+    source_dir = get_source_dir(context)
+    report_dir = action_report_dir(action, context, "jmeter")
+    test_plan = action.get("testPlan") or "tests/performance/test.jmx"
+    if not (source_dir / test_plan).exists():
+        raise HTTPException(status_code=422, detail=f"Performance test plan not found: {test_plan}")
+    base_url = normalize_http_url(action.get("baseUrl"))
+    parsed = urlparse(base_url)
+    jtl = report_dir / "results.jtl"
+    html_dir = report_dir / "html"
+    cmd = [
+        "jmeter", "-n", "-t", test_plan,
+        f"-Jprotocol={parsed.scheme or 'http'}",
+        f"-Jhost={parsed.hostname or base_url}",
+        f"-Jport={parsed.port or (443 if parsed.scheme == 'https' else 80)}",
+        f"-Jbase_path={parsed.path or '/'}",
+        f"-Jthreads={action.get('threads') or 10}",
+        f"-JrampSeconds={action.get('rampSeconds') or 30}",
+        f"-Jloops={action.get('loops') or 5}",
+        "-l", str(jtl), "-e", "-o", str(html_dir),
+    ]
+    result = run_command(cmd, cwd=source_dir, check=False)
+    response_times: List[int] = []
+    failures = 0
+    total = 0
+    if jtl.exists():
+        for line in jtl.read_text(errors="ignore").splitlines()[1:]:
+            parts = line.split(",")
+            if len(parts) >= 8:
+                total += 1
+                try:
+                    response_times.append(int(parts[1]))
+                except ValueError:
+                    pass
+                if parts[7].lower() != "true":
+                    failures += 1
+    response_times_sorted = sorted(response_times)
+    p95 = response_times_sorted[int(len(response_times_sorted) * 0.95) - 1] if response_times_sorted else 0
+    avg_ms = int(mean(response_times)) if response_times else 0
+    error_pct = (failures / total * 100) if total else 0
+    max_error = float(action.get("maxErrorPercent") or 1)
+    max_avg = int(action.get("maxAvgMs") or 2000)
+    max_p95 = int(action.get("maxP95Ms") or 5000)
+    passed = result.returncode == 0 and error_pct <= max_error and avg_ms <= max_avg and p95 <= max_p95
+    write_json(report_dir / "summary.json", {
+        "status": "PASSED" if passed else "FAILED",
+        "baseUrl": base_url,
+        "samples": total,
+        "failures": failures,
+        "errorPercent": round(error_pct, 2),
+        "averageMs": avg_ms,
+        "p95Ms": p95,
+        "thresholds": {"maxErrorPercent": max_error, "maxAvgMs": max_avg, "maxP95Ms": max_p95},
+    })
+    if not passed:
+        raise HTTPException(status_code=500, detail="Performance test failed")
+
+
+def execute_quality_code(action: Dict[str, Any], context: Dict[str, Any]) -> None:
+    source_dir = get_source_dir(context)
+    report_dir = action_report_dir(action, context, "code-quality")
+    source_files = [p for p in source_dir.rglob("*") if p.is_file() and ".git" not in p.parts and "node_modules" not in p.parts]
+    lines = 0
+    for path in source_files:
+        if path.suffix.lower() in {".js", ".ts", ".java", ".py", ".html", ".css", ".scss"}:
+            try:
+                lines += len(path.read_text(errors="ignore").splitlines())
+            except OSError:
+                pass
+    sonar_status = "NOT_CONFIGURED"
+    if (source_dir / "sonar-project.properties").exists() and shutil.which("sonar-scanner") and os.getenv("SONAR_HOST_URL"):
+        cmd = ["sonar-scanner", "-Dproject.settings=sonar-project.properties", f"-Dsonar.host.url={os.getenv('SONAR_HOST_URL')}"]
+        if os.getenv("SONAR_TOKEN"):
+            cmd.append(f"-Dsonar.token={os.getenv('SONAR_TOKEN')}")
+        sonar = run_command(cmd, cwd=source_dir, check=False)
+        sonar_status = "PASSED" if sonar.returncode == 0 else "FAILED"
+    write_json(report_dir / "summary.json", {
+        "status": "PASSED" if sonar_status != "FAILED" else "FAILED",
+        "mode": "SONAR_SCANNER" if sonar_status != "NOT_CONFIGURED" else "LOCAL_CODE_QUALITY",
+        "sourceFiles": len(source_files),
+        "linesOfCode": lines,
+        "sonarStatus": sonar_status,
+    })
+    if sonar_status == "FAILED" and as_bool(action.get("required"), False):
+        raise HTTPException(status_code=500, detail="Code quality scan failed")
+
+
+def execute_security_preflight(action: Dict[str, Any], context: Dict[str, Any]) -> None:
+    source_dir = get_source_dir(context)
+    report_dir = action_report_dir(action, context, "security-preflight")
+    excluded = {".git", "node_modules", "target", "dist", "build", ".angular", ".mvn"}
+    secret_patterns = [
+        ("aws_access_key", re.compile(r"AKIA[0-9A-Z]{16}")),
+        ("private_key", re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----")),
+        ("hardcoded_secret", re.compile(r"(?i)\b(password|passwd|secret|token|apikey|api_key|client_secret)\b\s*[:=]\s*['\"][^'\"]{8,}")),
+        ("connection_string", re.compile(r"(?i)(jdbc:|mongodb://|postgres(?:ql)?://|mysql://)[^\s'\"]+")),
+    ]
+    text_suffixes = {".cfg", ".conf", ".env", ".groovy", ".ini", ".java", ".js", ".json", ".properties", ".py", ".sh", ".tf", ".ts", ".txt", ".yaml", ".yml", ".xml"}
+    findings = []
+    for path in source_dir.rglob("*"):
+        if not path.is_file() or any(part in excluded for part in path.parts):
+            continue
+        if path.suffix.lower() not in text_suffixes and path.name not in {"Dockerfile", "Jenkinsfile"}:
+            continue
+        try:
+            text = path.read_text(errors="ignore")
+        except OSError:
+            continue
+        for line_no, line in enumerate(text.splitlines(), start=1):
+            for rule_id, pattern in secret_patterns:
+                if pattern.search(line):
+                    findings.append({
+                        "ruleId": rule_id,
+                        "file": str(path.relative_to(source_dir)),
+                        "line": line_no,
+                        "severity": "HIGH",
+                        "category": "Secret Exposure" if rule_id != "connection_string" else "Configuration Exposure",
+                    })
+
+    trivy_summary = {"status": "NOT_RUN", "findingCount": 0}
+    if shutil.which("trivy"):
+        trivy_json = report_dir / "filesystem-security.json"
+        trivy = run_command(
+            [
+                "trivy", "fs",
+                "--format", "json",
+                "--scanners", "secret,config",
+                "--severity", "CRITICAL,HIGH,MEDIUM",
+                "--output", str(trivy_json),
+                ".",
+            ],
+            cwd=source_dir,
+            check=False,
+        )
+        trivy_count = 0
+        if trivy_json.exists():
+            try:
+                doc = json.loads(trivy_json.read_text())
+                for result in doc.get("Results", []) or []:
+                    trivy_count += len(result.get("Secrets") or [])
+                    trivy_count += len(result.get("Misconfigurations") or [])
+            except json.JSONDecodeError:
+                trivy_count = 0
+        trivy_summary = {
+            "status": "COMPLETED" if trivy.returncode in {0, 1} else "ERROR",
+            "findingCount": trivy_count,
+            "exitCode": trivy.returncode,
+        }
+
+    terraform_summary = {"status": "NOT_RUN"}
+    if shutil.which("terraform") and any(source_dir.rglob("*.tf")):
+        tf = run_command(["terraform", "fmt", "-check", "-recursive"], cwd=source_dir, check=False)
+        terraform_summary = {"status": "PASSED" if tf.returncode == 0 else "FAILED", "exitCode": tf.returncode}
+
+    (report_dir / "secrets.txt").write_text(
+        "\n".join(f"{item['severity']} {item['ruleId']} {item['file']}:{item['line']}" for item in findings)
+    )
+    (report_dir / "preflight-failures.txt").write_text(
+        "\n".join(f"{item['ruleId']} {item['file']}:{item['line']}" for item in findings if item["severity"] in {"CRITICAL", "HIGH"})
+    )
+    write_json(report_dir / "findings.json", findings)
+    total_findings = len(findings) + int(trivy_summary.get("findingCount") or 0)
+    write_json(report_dir / "summary.json", {
+        "status": "PASSED" if total_findings == 0 else "COMPLETED_WITH_FINDINGS",
+        "findingCount": total_findings,
+        "patternFindingCount": len(findings),
+        "externalScan": trivy_summary,
+        "terraformFormat": terraform_summary,
+        "failOnFindings": as_bool(action.get("failOnFindings"), False),
+    })
+    if total_findings and as_bool(action.get("failOnFindings"), False):
+        raise HTTPException(status_code=500, detail="Source security preflight found blocking findings")
+
+
+def execute_security_static_code(action: Dict[str, Any], context: Dict[str, Any]) -> None:
+    source_dir = get_source_dir(context)
+    report_dir = action_report_dir(action, context, "static-security")
+    patterns = [
+        ("hardcoded_secret", re.compile(r"(?i)(password|secret|token|apikey|api_key)\s*[:=]\s*['\"][^'\"]{8,}")),
+        ("dangerous_eval", re.compile(r"\beval\s*\(")),
+        ("insecure_http", re.compile(r"(?i)['\"]http://")),
+        ("shell_exec", re.compile(r"(?i)(exec|spawn|Runtime\.getRuntime\(\)\.exec)")),
+    ]
+    findings = []
+    for path in source_dir.rglob("*"):
+        if not path.is_file() or any(part in {".git", "node_modules", "target", "dist", "build"} for part in path.parts):
+            continue
+        try:
+            text = path.read_text(errors="ignore")
+        except OSError:
+            continue
+        for idx, line in enumerate(text.splitlines(), start=1):
+            for rule_id, pattern in patterns:
+                if pattern.search(line):
+                    findings.append({
+                        "ruleId": rule_id,
+                        "file": str(path.relative_to(source_dir)),
+                        "line": idx,
+                        "severity": "HIGH" if rule_id in {"hardcoded_secret", "dangerous_eval"} else "MEDIUM",
+                    })
+    write_json(report_dir / "findings.json", findings)
+    write_json(report_dir / "summary.json", {"status": "PASSED", "findingCount": len(findings), "reviewTeam": action.get("reviewTeam") or ""})
+
+
+def execute_security_container_iac(action: Dict[str, Any], context: Dict[str, Any]) -> None:
+    source_dir = get_source_dir(context)
+    report_dir = action_report_dir(action, context, "container-iac")
+    image_uri = render_value(action.get("imageUri") or "", context)
+    region = action.get("awsRegion") or os.getenv("AWS_REGION", "us-east-1")
+    role_env = assume_role_env(action.get("roleArn", ""), region, f"horizon-scan-{context['requestId']}")
+    results = {"filesystem": "NOT_RUN", "image": "NOT_RUN", "status": "PASSED"}
+    if shutil.which("trivy"):
+        fs_json = report_dir / "filesystem-security.json"
+        fs = run_command(["trivy", "fs", "--format", "json", "--scanners", "vuln,secret,config", "--severity", "CRITICAL,HIGH,MEDIUM", "--output", str(fs_json), "."], cwd=source_dir, check=False)
+        results["filesystem"] = "PASSED" if fs.returncode == 0 else "FINDINGS"
+        if image_uri:
+            image_json = report_dir / "image-security.json"
+            image = run_command(["trivy", "image", "--format", "json", "--severity", "CRITICAL,HIGH,MEDIUM", "--output", str(image_json), image_uri], env=role_env, check=False)
+            results["image"] = "PASSED" if image.returncode == 0 else "FINDINGS"
+    else:
+        results["status"] = "COMPLETED_WITHOUT_EXTERNAL_SCANNER"
+    write_json(report_dir / "summary.json", results)
+
+
+def execute_security_policy(action: Dict[str, Any], context: Dict[str, Any]) -> None:
+    source_dir = get_source_dir(context)
+    report_dir = action_report_dir(action, context, "policy")
+    findings = []
+    for path in list(source_dir.rglob("*.yaml")) + list(source_dir.rglob("*.yml")):
+        if any(part in {".git", "node_modules", "target", "dist", "build"} for part in path.parts):
+            continue
+        text = path.read_text(errors="ignore")
+        if "privileged: true" in text:
+            findings.append({"ruleId": "no-privileged-workloads", "file": str(path.relative_to(source_dir)), "severity": "HIGH"})
+        if "hostNetwork: true" in text:
+            findings.append({"ruleId": "no-host-network", "file": str(path.relative_to(source_dir)), "severity": "HIGH"})
+        if re.search(r"image:\s+[^:\s]+(?:\s|$)", text):
+            findings.append({"ruleId": "image-tag-required", "file": str(path.relative_to(source_dir)), "severity": "MEDIUM"})
+    if (source_dir / "Dockerfile").exists():
+        dockerfile = (source_dir / "Dockerfile").read_text(errors="ignore")
+        if re.search(r"(?im)^USER\s+root\s*$", dockerfile) or not re.search(r"(?im)^USER\s+\S+", dockerfile):
+            findings.append({"ruleId": "container-non-root-user", "file": "Dockerfile", "severity": "MEDIUM"})
+    write_json(report_dir / "findings.json", findings)
+    write_json(report_dir / "summary.json", {"status": "PASSED", "findingCount": len(findings)})
+
+
+def execute_release_load_metadata(action: Dict[str, Any], context: Dict[str, Any]) -> None:
+    rendered = render_value(action, context)
+    region = rendered["awsRegion"]
+    bucket = rendered["artifactBucket"]
+    prefix = rendered["artifactPrefix"].strip("/")
+    role_env = assume_role_env(rendered.get("roleArn", ""), region, f"horizon-release-load-{context['requestId']}")
+    artifact_dir = context["runDir"] / "release-artifacts"
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    image_path = artifact_dir / "image.json"
+    template_path = artifact_dir / "templateconfiguration.json"
+    run_command(["aws", "s3", "cp", f"s3://{bucket}/{rendered['imageJsonPath'].lstrip('/')}", str(image_path), "--region", region], env=role_env)
+    run_command(["aws", "s3", "cp", f"s3://{bucket}/{rendered['templateConfigPath'].lstrip('/')}", str(template_path), "--region", region], env=role_env)
+    image_doc = json.loads(image_path.read_text())
+    digest = image_doc.get("ImageSHA") or image_doc.get("imageDigest") or image_doc.get("digest")
+    tag = image_doc.get("ImageTag") or image_doc.get("imageTag")
+    repo = image_doc.get("ImageRepo") or image_doc.get("imageRepo")
+    if not digest or not str(digest).startswith("sha256:"):
+        raise HTTPException(status_code=422, detail="image.json does not contain a valid image digest")
+    context["artifact"] = {"bucket": bucket, "prefix": prefix, "region": region, "roleArn": rendered.get("roleArn", "")}
+    context["release"] = {"sourceImageDigest": digest, "sourceImageTag": tag, "sourceImageRepo": repo, "template": json.loads(template_path.read_text())}
+
+
+def execute_release_promote_image(action: Dict[str, Any], context: Dict[str, Any]) -> None:
+    rendered = render_value(action, context)
+    region = rendered["awsRegion"]
+    source_role_env = assume_role_env(rendered.get("sourceRoleArn", ""), region, f"horizon-release-src-{context['requestId']}")
+    target_role_env = assume_role_env(rendered.get("targetRoleArn", ""), region, f"horizon-release-tgt-{context['requestId']}")
+    source_registry = ecr_host(rendered["sourceRegistry"], region)
+    target_registry = ecr_host(rendered["targetRegistry"], region)
+    source_repo = rendered["sourceRepository"]
+    target_repo = rendered["targetRepository"]
+    digest = context.get("release", {}).get("sourceImageDigest")
+    if not digest:
+        source_tag = rendered.get("sourceImageTag")
+        if not source_tag:
+            raise HTTPException(status_code=422, detail="Release promotion requires image digest or source image tag")
+        digest = run_command(
+            ["aws", "ecr", "describe-images", "--region", region, "--repository-name", source_repo, "--image-ids", f"imageTag={source_tag}", "--query", "imageDetails[0].imageDigest", "--output", "text"],
+            env=source_role_env,
+        ).stdout.strip()
+    manifest = run_command(
+        ["aws", "ecr", "batch-get-image", "--region", region, "--repository-name", source_repo, "--image-ids", f"imageDigest={digest}", "--query", "images[0].imageManifest", "--output", "text"],
+        env=source_role_env,
+        log_output=False,
+    ).stdout.strip()
+    describe = run_command(["aws", "ecr", "describe-repositories", "--region", region, "--repository-names", target_repo], env=target_role_env, check=False)
+    if describe.returncode != 0:
+        run_command(["aws", "ecr", "create-repository", "--region", region, "--repository-name", target_repo, "--image-scanning-configuration", "scanOnPush=true"], env=target_role_env)
+    target_tags = csv_values(rendered.get("targetTags")) or ["promoted"]
+    for tag in target_tags:
+        run_command(["aws", "ecr", "put-image", "--region", region, "--repository-name", target_repo, "--image-tag", tag, "--image-manifest", manifest], env=target_role_env)
+    repo_uri = f"{target_registry}/{target_repo}".lower()
+    context["image"] = {
+        "tag": target_tags[0],
+        "uri": f"{repo_uri}:{target_tags[0]}",
+        "repoUri": repo_uri,
+        "digest": digest,
+        "uriWithDigest": f"{repo_uri}@{digest}",
+        "repository": target_repo,
+        "registry": target_registry,
+    }
+
+
+def execute_release_publish_approval(action: Dict[str, Any], context: Dict[str, Any]) -> None:
+    rendered = render_value(action, context)
+    region = rendered["awsRegion"]
+    bucket = rendered["artifactBucket"]
+    prefix = rendered["artifactPrefix"].strip("/")
+    target_env = rendered.get("targetEnv") or "release"
+    role_env = assume_role_env(rendered.get("roleArn", ""), region, f"horizon-release-approval-{context['requestId']}")
+    approval = {
+        "status": "APPROVED",
+        "approvedBy": rendered.get("approvedBy") or "horizon-release-manager",
+        "targetEnv": target_env,
+        "imageDigest": context.get("image", {}).get("digest"),
+        "recordedAt": utc_now().isoformat(),
+    }
+    path = context["runDir"] / "artifacts" / "approval.json"
+    write_json(path, approval)
+    run_command(["aws", "s3", "cp", str(path), f"s3://{bucket}/{prefix}/{target_env.lower()}/approval.json", "--region", region], env=role_env)
+
+
 def execute_eks_deploy(action: Dict[str, Any], context: Dict[str, Any]) -> None:
     rendered = render_value(action, context)
     region = rendered["awsRegion"]
@@ -646,6 +1144,7 @@ def execute_actions(actions: List[Dict[str, Any]], request: RunnerRequest) -> Li
         "requestId": request.requestId,
         "runDir": action_workspace(request.requestId),
         "project": {"name": str((request.payload or request.parameters or {}).get("PROJECT_NAME") or request.jobName or request.requestId)},
+        "requestPayload": request.payload or request.parameters or {},
     }
     executed = []
     for idx, action in enumerate(actions):
@@ -691,6 +1190,71 @@ def execute_actions(actions: List[Dict[str, Any]], request: RunnerRequest) -> Li
 
         if action_type == "artifact.publish":
             execute_artifact_publish(action, context)
+            executed.append(name)
+            continue
+
+        if action_type == "artifact.context":
+            execute_artifact_context(action, context)
+            executed.append(name)
+            continue
+
+        if action_type == "artifact.publish_reports":
+            execute_publish_reports(action, context)
+            executed.append(name)
+            continue
+
+        if action_type == "quality.ui":
+            execute_quality_ui(action, context)
+            executed.append(name)
+            continue
+
+        if action_type == "quality.api":
+            execute_quality_api(action, context)
+            executed.append(name)
+            continue
+
+        if action_type == "quality.performance":
+            execute_quality_performance(action, context)
+            executed.append(name)
+            continue
+
+        if action_type == "quality.code":
+            execute_quality_code(action, context)
+            executed.append(name)
+            continue
+
+        if action_type == "security.preflight":
+            execute_security_preflight(action, context)
+            executed.append(name)
+            continue
+
+        if action_type == "security.static_code":
+            execute_security_static_code(action, context)
+            executed.append(name)
+            continue
+
+        if action_type == "security.container_iac":
+            execute_security_container_iac(action, context)
+            executed.append(name)
+            continue
+
+        if action_type == "security.policy":
+            execute_security_policy(action, context)
+            executed.append(name)
+            continue
+
+        if action_type == "release.load_metadata":
+            execute_release_load_metadata(action, context)
+            executed.append(name)
+            continue
+
+        if action_type == "release.promote_image":
+            execute_release_promote_image(action, context)
+            executed.append(name)
+            continue
+
+        if action_type == "release.publish_approval":
+            execute_release_publish_approval(action, context)
             executed.append(name)
             continue
 

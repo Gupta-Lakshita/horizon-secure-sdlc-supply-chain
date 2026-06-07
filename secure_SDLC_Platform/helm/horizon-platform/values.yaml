@@ -219,7 +219,7 @@ components:
       source: runner
   runner:
     enabled: true
-    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/runner:0.1.2
+    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/runner:0.1.4
     imagePullPolicy: Always
     replicas: 1
     servicePort: 8080
