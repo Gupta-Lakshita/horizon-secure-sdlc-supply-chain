@@ -171,6 +171,29 @@ terraformState:
   keyPrefix: horizon-installer
 ```
 
+For enterprise clients with separate non-prod and prod AWS accounts, keep Terraform state in the account that owns the environment. The top-level `terraformState` block is the default/platform backend. Add `terraform.backend` under an environment when that environment needs its own account-local backend:
+
+```yaml
+environments:
+  - name: PROD
+    aws:
+      accountId: "222233334444"
+      region: us-east-1
+    terraform:
+      stateKey: horizon-installer/prod/terraform.tfstate
+      backend:
+        state: provision
+        backend: s3
+        bucket: acme-prod-horizon-tfstate-222233334444-us-east-1
+        region: us-east-1
+        lockTable: acme-prod-horizon-tflock
+        kmsKeyArn: ""
+        keyPrefix: horizon-installer
+        deletionPolicy: retain
+```
+
+Run `install.sh --phase state --environment PROD` with PROD account credentials before running `install.sh --phase infra --environment PROD`.
+
 ## Environment Catalog
 
 Enterprise paid clients should use validation-only IAM and namespace-scoped EKS access:

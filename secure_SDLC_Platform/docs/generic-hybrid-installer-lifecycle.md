@@ -227,11 +227,33 @@ bash secure_SDLC_Platform/scripts/preflight.sh \
 
 ### State Backend
 
-Create the remote state bucket and lock table only when `terraformState.state=provision`:
+Create the default/platform remote state bucket and lock table only when `terraformState.state=provision`:
 
 ```bash
 bash secure_SDLC_Platform/scripts/install.sh \
   --phase state \
+  -f secure_SDLC_Platform/examples/client-hybrid-onboarding-values.yaml \
+  --auto-approve
+```
+
+For strict enterprise account separation, define an environment-level backend override such as `environments[].terraform.backend` and run the state phase with that environment while using credentials for that account:
+
+```yaml
+environments:
+  - name: PROD
+    terraform:
+      stateKey: horizon-installer/prod/terraform.tfstate
+      backend:
+        state: provision
+        bucket: client-prod-horizon-tfstate
+        region: us-east-1
+        lockTable: client-prod-horizon-tflock
+```
+
+```bash
+bash secure_SDLC_Platform/scripts/install.sh \
+  --phase state \
+  --environment PROD \
   -f secure_SDLC_Platform/examples/client-hybrid-onboarding-values.yaml \
   --auto-approve
 ```

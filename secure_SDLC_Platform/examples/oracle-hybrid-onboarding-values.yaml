@@ -27,6 +27,9 @@ naming:
   kmsAliasPrefix: horizon/oracle
 
 terraformState:
+  # Default backend used by the platform and non-prod environments. PROD has
+  # its own environment-level backend override below so production state lives
+  # in the production AWS account.
   state: provision
   backend: s3
   bucket: oracle-horizon-tfstate-921570400913-us-east-1
@@ -324,9 +327,19 @@ environments:
     # Keep production disabled during the first no-DNS trial smoke test.
     # Enable after the prod account is bootstrapped and cross-account promotion
     # roles are created/approved by the client security team.
-    enabled: false
+    enabled: true
     accountTier: prod
-    terraform: { stateKey: horizon-installer/prod/terraform.tfstate }
+    terraform:
+      stateKey: horizon-installer/prod/terraform.tfstate
+      backend:
+        state: provision
+        backend: s3
+        bucket: oracle-horizon-tfstate-859925122079-us-east-1
+        region: us-east-1
+        lockTable: oracle-horizon-tflock
+        kmsKeyArn: ""
+        keyPrefix: horizon-installer
+        deletionPolicy: retain
     aws: { accountId: "859925122079", region: us-east-1 }
     foundation:
       vpc: { state: provision, deletionPolicy: retain, vpcId: "", subnetIds: [] }
@@ -342,11 +355,11 @@ environments:
       sourceRole:
         state: existing
         deletionPolicy: retain
-        roleArn: "arn:aws:iam::921570400913:role/OracleHorizonProdPromotionSourceRole"
+        roleArn: "arn:aws:iam::921570400913:role/ProdPromotionSourceRole"
       targetRole:
         state: existing
         deletionPolicy: retain
-        roleArn: "arn:aws:iam::859925122079:role/OracleHorizonProdPromotionTargetRole"
+        roleArn: "arn:aws:iam::859925122079:role/ProdPromotionTargetRole"
     eks:
       state: provision
       deletionPolicy: retain
@@ -366,4 +379,4 @@ environments:
         maxSize: 2
       namespace: { state: provision, deletionPolicy: retain, strategy: fixed, template: oracle-demo-app-prod }
       accessEntry: { state: provision, deletionPolicy: retain, policyArn: "arn:aws:eks::aws:cluster-access-policy/AmazonEKSEditPolicy", scopeType: namespace }
-    runtime: { isDeployable: false, requiresApproval: true }
+    runtime: { isDeployable: true, requiresApproval: true }

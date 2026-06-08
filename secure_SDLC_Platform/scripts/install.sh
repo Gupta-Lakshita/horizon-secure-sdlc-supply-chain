@@ -14,6 +14,8 @@ GENERATED_DIR="${ROOT_DIR}/.generated"
 
 usage() {
   echo "Usage: $0 --phase <state|infra|platform|catalog|all> -f <client-values.yaml> [--environment ENV] [--dry-run] [--auto-approve] [--insecure-catalog-sync]"
+  echo "  state phase without --environment creates/validates the default/platform backend."
+  echo "  state phase with --environment creates/validates that environment's backend override when configured."
 }
 
 while [[ $# -gt 0 ]]; do
@@ -354,8 +356,15 @@ reconcile_platform_iam_trust() {
 
 run_state() {
   echo "== Terraform state backend phase =="
-  local tfvars_file="${GENERATED_DIR}/state-backend.auto.tfvars.json"
-  ruby "${HELPER}" state-tfvars --file "${VALUES_FILE}" > "${tfvars_file}"
+  local tfvars_file state_command
+  if [[ -n "${ENVIRONMENT}" ]]; then
+    tfvars_file="${GENERATED_DIR}/state-backend-$(echo "${ENVIRONMENT}" | tr '[:upper:]' '[:lower:]').auto.tfvars.json"
+    state_command=(ruby "${HELPER}" state-tfvars --file "${VALUES_FILE}" --environment "${ENVIRONMENT}")
+  else
+    tfvars_file="${GENERATED_DIR}/state-backend.auto.tfvars.json"
+    state_command=(ruby "${HELPER}" state-tfvars --file "${VALUES_FILE}")
+  fi
+  "${state_command[@]}" > "${tfvars_file}"
   [[ "${DRY_RUN}" == "true" ]] && { echo "Dry-run: would initialize and plan Terraform state backend resources."; echo "Generated: ${tfvars_file}"; return; }
   terraform -chdir="${ROOT_DIR}/terraform/bootstrap" init
   terraform -chdir="${ROOT_DIR}/terraform/bootstrap" plan -var-file="${tfvars_file}"

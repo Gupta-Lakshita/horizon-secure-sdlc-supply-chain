@@ -407,7 +407,7 @@ bash secure_SDLC_Platform/scripts/install.sh \
 
 ## Terraform Remote State
 
-Terraform state must remain inside the client boundary. The hybrid values file uses one client-owned S3 state bucket and one DynamoDB lock table, with separate keys per environment:
+Terraform state must remain inside the client boundary. Small single-account clients can use one client-owned S3 state bucket and one DynamoDB lock table, with separate keys per environment:
 
 ```text
 horizon-installer/platform/terraform.tfstate
@@ -415,6 +415,48 @@ horizon-installer/dev/terraform.tfstate
 horizon-installer/qa/terraform.tfstate
 horizon-installer/stage/terraform.tfstate
 horizon-installer/prod/terraform.tfstate
+```
+
+For enterprise clients with separate AWS accounts, keep each account's state in that account. Use the top-level `terraformState` block as the default/platform backend, then override the production backend under `environments[].terraform.backend`:
+
+```yaml
+terraformState:
+  state: provision
+  bucket: oracle-horizon-tfstate-921570400913-us-east-1
+  region: us-east-1
+  lockTable: oracle-horizon-tflock
+  keyPrefix: horizon-installer
+
+environments:
+  - name: PROD
+    aws:
+      accountId: "859925122079"
+      region: us-east-1
+    terraform:
+      stateKey: horizon-installer/prod/terraform.tfstate
+      backend:
+        state: provision
+        bucket: oracle-horizon-tfstate-859925122079-us-east-1
+        region: us-east-1
+        lockTable: oracle-horizon-tflock
+        keyPrefix: horizon-installer
+```
+
+With this model, run the state phase once in the non-prod/platform account and once in the PROD account:
+
+```bash
+# Run with non-prod/platform AWS credentials.
+bash secure_SDLC_Platform/scripts/install.sh \
+  --phase state \
+  -f client-values.local.yaml \
+  --auto-approve
+
+# Run with PROD AWS credentials.
+bash secure_SDLC_Platform/scripts/install.sh \
+  --phase state \
+  --environment PROD \
+  -f client-values.local.yaml \
+  --auto-approve
 ```
 
 If the client already has a state backend, set:
@@ -440,7 +482,7 @@ bash secure_SDLC_Platform/scripts/install.sh \
   --auto-approve
 ```
 
-The state bucket, lock table, and state KMS key should normally use `deletionPolicy: retain`.
+The state bucket, lock table, and state KMS key should normally use `deletionPolicy: retain`. Avoid storing PROD Terraform state in a non-prod account unless the client has explicitly approved a centralized state governance model and cross-account S3/DynamoDB access.
 
 ## Destroy Workflow
 

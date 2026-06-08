@@ -249,7 +249,20 @@ environments:
     displayName: Production
     enabled: true
     accountTier: prod
-    terraform: { stateKey: horizon-installer/prod/terraform.tfstate }
+    terraform:
+      stateKey: horizon-installer/prod/terraform.tfstate
+      # Optional enterprise override: when PROD is a separate AWS account, keep
+      # PROD Terraform state in a PROD-owned bucket/table and run:
+      # install.sh --phase state --environment PROD
+      # backend:
+      #   state: provision
+      #   backend: s3
+      #   bucket: acme-prod-horizon-tfstate-222233334444-us-east-1
+      #   region: us-east-1
+      #   lockTable: acme-prod-horizon-tflock
+      #   kmsKeyArn: ""
+      #   keyPrefix: horizon-installer
+      #   deletionPolicy: retain
     aws: { accountId: "426946630837", region: us-east-1 }
     foundation:
       vpc: { state: disabled, deletionPolicy: retain, vpcId: "", subnetIds: [] }

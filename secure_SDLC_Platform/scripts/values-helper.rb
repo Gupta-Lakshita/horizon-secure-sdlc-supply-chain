@@ -165,6 +165,7 @@ def validate_values(values, env_name = nil)
     next unless enabled_environment?(env)
 
     env_label = env["name"].to_s.upcase
+    env_backend = dig_path(env, "terraform.backend")
     runtime = env["runtime"] || {}
     deployable = runtime.key?("isDeployable") ? runtime["isDeployable"] != false : true
     account_tier = env["accountTier"].to_s
@@ -177,6 +178,10 @@ def validate_values(values, env_name = nil)
     errors << "#{env_label}.aws.accountId is required" if blank?(dig_path(env, "aws.accountId"))
     errors << "#{env_label}.aws.region is required" if blank?(dig_path(env, "aws.region"))
     errors << "#{env_label}.terraform.stateKey is required" if blank?(dig_path(env, "terraform.stateKey"))
+    if env_backend.is_a?(Hash) && state_of(env_backend) != "disabled"
+      errors << "#{env_label}.terraform.backend.bucket is required" if blank?(env_backend["bucket"])
+      errors << "#{env_label}.terraform.backend.region or #{env_label}.aws.region is required" if blank?(env_backend["region"]) && blank?(dig_path(env, "aws.region"))
+    end
 
     if deployable
       errors << "#{env_label}.foundation.artifactBucket.name is required for deployable environments" if blank?(dig_path(env, "foundation.artifactBucket.name"))
@@ -218,12 +223,6 @@ def check_lines(values, env_name = nil)
   envs = env_name ? [env_or_exit(values, env_name)] : environments(values)
   lines = []
 
-  if state_of(values["terraformState"]) == "existing"
-    region = dig_path(values, "terraformState.region") || dig_path(values, "platform.region")
-    lines << ["s3_bucket", dig_path(values, "terraformState.bucket"), region, "terraformState.bucket"]
-    lines << ["dynamodb_table", dig_path(values, "terraformState.lockTable"), region, "terraformState.lockTable"]
-  end
-
   if state_of(dig_path(values, "platform.cluster")) == "existing"
     lines << ["eks_cluster", dig_path(values, "platform.cluster.name"), dig_path(values, "platform.region"), "platform.cluster"]
   end
@@ -235,6 +234,11 @@ def check_lines(values, env_name = nil)
 
   envs.each do |env|
     region = dig_path(env, "aws.region") || dig_path(values, "platform.region")
+    backend = terraform_backend(values, env)
+    if state_of(backend) == "existing"
+      lines << ["s3_bucket", backend["bucket"], backend["region"], "#{env["name"]}.terraform.backend.bucket"]
+      lines << ["dynamodb_table", backend["lockTable"], backend["region"], "#{env["name"]}.terraform.backend.lockTable"] if backend["lockTable"].to_s != ""
+    end
     lines << ["s3_bucket", dig_path(env, "foundation.artifactBucket.name"), region, "#{env["name"]}.artifactBucket"] if state_of(dig_path(env, "foundation.artifactBucket")) == "existing"
     lines << ["ecr_repository", dig_path(env, "foundation.applicationEcr.repositoryName"), region, "#{env["name"]}.applicationEcr"] if state_of(dig_path(env, "foundation.applicationEcr")) == "existing"
     lines << ["eks_cluster", dig_path(env, "eks.clusterName"), region, "#{env["name"]}.eks"] if state_of(dig_path(env, "eks")) == "existing"
@@ -251,6 +255,7 @@ def provision_items(values, env_name = nil, destroy: false)
   envs = env_name ? [env_or_exit(values, env_name)] : environments(values)
   envs.each do |env|
     walk_resources(env) do |path, resource|
+      next if path.end_with?("terraform.backend")
       next unless state_of(resource) == "provision"
       next if destroy && deletion_policy_of(resource, values) != "delete"
       label = resource["clusterName"] || resource["name"] || resource["repositoryName"] || resource["template"] || resource["roleArn"] || path
@@ -264,15 +269,19 @@ def plan(values, env_name = nil)
   envs = env_name ? [env_or_exit(values, env_name)] : environments(values)
   puts "== Horizon installer desired-state plan =="
   puts "Installer mode: #{dig_path(values, "installer.mode")}"
-  puts "Terraform state bucket: #{dig_path(values, "terraformState.bucket")}"
-  puts "Terraform lock table: #{dig_path(values, "terraformState.lockTable")}"
+  puts "Default Terraform state bucket: #{dig_path(values, "terraformState.bucket")}"
+  puts "Default Terraform lock table: #{dig_path(values, "terraformState.lockTable")}"
   puts
   envs.each do |env|
+    backend = terraform_backend(values, env)
     puts "Environment: #{env["name"]} (#{env["displayName"]})"
     puts "  Account: #{dig_path(env, "aws.accountId")}"
     puts "  Region: #{dig_path(env, "aws.region")}"
     puts "  Terraform state: #{dig_path(env, "terraform.stateKey")}"
+    puts "  Terraform backend bucket: #{backend["bucket"]}"
+    puts "  Terraform backend lock table: #{backend["lockTable"]}" if backend["lockTable"].to_s != ""
     walk_resources(env) do |path, resource|
+      next if path.end_with?("terraform.backend")
       next if state_of(resource) == "disabled"
       label = resource["clusterName"] || resource["name"] || resource["repositoryName"] || resource["roleArn"] || resource["template"] || ""
       puts "  - #{path}: #{state_of(resource)}, deletionPolicy=#{deletion_policy_of(resource, values)} #{label}"
@@ -281,23 +290,59 @@ def plan(values, env_name = nil)
   end
 end
 
-def backend_config(values, scope, env_name = nil)
+def terraform_backend(values, env = nil, scope = "environment")
   tfstate = values["terraformState"] || {}
+  override =
+    if scope == "platform"
+      dig_path(values, "platform.terraform.backend")
+    elsif env
+      dig_path(env, "terraform.backend")
+    end
+  override = {} unless override.is_a?(Hash)
+
+  region = first_present(
+    override["region"],
+    env && dig_path(env, "aws.region"),
+    tfstate["region"],
+    dig_path(values, "platform.region"),
+    "us-east-1"
+  )
+
+  {
+    "state" => first_present(override["state"], tfstate["state"], "disabled"),
+    "backend" => first_present(override["backend"], tfstate["backend"], "s3"),
+    "bucket" => first_present(override["bucket"], tfstate["bucket"]),
+    "region" => region,
+    "lockTable" => first_present(override["lockTable"], tfstate["lockTable"]),
+    "kmsKeyArn" => first_present(override["kmsKeyArn"], tfstate["kmsKeyArn"]),
+    "keyPrefix" => first_present(override["keyPrefix"], tfstate["keyPrefix"], "horizon-installer"),
+    "deletionPolicy" => first_present(override["deletionPolicy"], tfstate["deletionPolicy"], "retain")
+  }
+end
+
+def backend_config(values, scope, env_name = nil)
+  env = nil
+  backend = if scope == "platform"
+              terraform_backend(values, nil, "platform")
+            elsif scope == "environment"
+              env = env_or_exit(values, env_name)
+              terraform_backend(values, env)
+            else
+              warn "--scope must be platform or environment"
+              exit 1
+            end
+
   key = if scope == "platform"
-          dig_path(values, "platform.terraform.stateKey") || "#{tfstate["keyPrefix"]}/platform/terraform.tfstate"
+          dig_path(values, "platform.terraform.stateKey") || "#{backend["keyPrefix"]}/platform/terraform.tfstate"
         elsif scope == "environment"
-          env = env_or_exit(values, env_name)
-          dig_path(env, "terraform.stateKey") || "#{tfstate["keyPrefix"]}/#{env_name.downcase}/terraform.tfstate"
-        else
-          warn "--scope must be platform or environment"
-          exit 1
+          dig_path(env, "terraform.stateKey") || "#{backend["keyPrefix"]}/#{env_name.downcase}/terraform.tfstate"
         end
-  puts "bucket         = #{tfstate["bucket"].to_s.inspect}"
+  puts "bucket         = #{backend["bucket"].to_s.inspect}"
   puts "key            = #{key.to_s.inspect}"
-  puts "region         = #{(tfstate["region"] || dig_path(values, "platform.region") || "us-east-1").inspect}"
-  puts "dynamodb_table = #{tfstate["lockTable"].to_s.inspect}" if tfstate["lockTable"].to_s != ""
+  puts "region         = #{backend["region"].inspect}"
+  puts "dynamodb_table = #{backend["lockTable"].to_s.inspect}" if backend["lockTable"].to_s != ""
   puts "encrypt        = true"
-  puts "kms_key_id     = #{tfstate["kmsKeyArn"].inspect}" if tfstate["kmsKeyArn"].to_s != ""
+  puts "kms_key_id     = #{backend["kmsKeyArn"].inspect}" if backend["kmsKeyArn"].to_s != ""
 end
 
 def tfvars(values, env_name)
@@ -365,8 +410,9 @@ def deploy_role_arns(values)
   end
 end
 
-def state_tfvars(values)
-  tfstate = values["terraformState"] || {}
+def state_tfvars(values, env_name = nil)
+  env = env_name ? env_or_exit(values, env_name) : nil
+  tfstate = env ? terraform_backend(values, env) : terraform_backend(values, nil, "platform")
   puts JSON.pretty_generate({
     aws_region: tfstate["region"] || dig_path(values, "platform.region") || "us-east-1",
     create_state_bucket: state_of(tfstate) == "provision",
@@ -374,7 +420,12 @@ def state_tfvars(values)
     state_lock_table_name: tfstate["lockTable"],
     state_kms_key_arn: tfstate["kmsKeyArn"],
     state_key_prefix: tfstate["keyPrefix"],
-    tags: { Client: dig_path(values, "client.id"), ManagedBy: managed_by(values), Purpose: "terraform-state" }
+    tags: {
+      Client: dig_path(values, "client.id"),
+      ManagedBy: managed_by(values),
+      Purpose: "terraform-state",
+      Environment: env_name || "platform"
+    }
   })
 end
 
@@ -496,7 +547,7 @@ when "checks" then validate_values(values, args[:environment]); check_lines(valu
 when "provision-items" then validate_values(values, args[:environment]); provision_items(values, args[:environment])
 when "destroy-items" then validate_values(values, args[:environment]); provision_items(values, args[:environment], destroy: true)
 when "tfvars" then validate_values(values, args[:environment]); tfvars(values, args[:environment] || (warn("--environment is required for tfvars") && exit(1)))
-when "state-tfvars" then validate_values(values, args[:environment]); state_tfvars(values)
+when "state-tfvars" then validate_values(values, args[:environment]); state_tfvars(values, args[:environment])
 when "backend-config" then validate_values(values, args[:environment]); backend_config(values, args[:scope], args[:environment])
 when "catalog-payload" then validate_values(values, args[:environment]); catalog_payload(values, args[:environment], load_terraform_outputs(args[:terraform_output]))
 when "deploy-role-arns" then validate_values(values, args[:environment]); deploy_role_arns(values)
