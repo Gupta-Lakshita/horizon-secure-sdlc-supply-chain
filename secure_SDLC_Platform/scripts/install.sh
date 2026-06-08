@@ -88,7 +88,50 @@ run_environment_terraform() {
 run_existing_resource_checks() {
   echo "== Existing resource preflight =="
   command -v aws >/dev/null || { echo "Missing required command: aws" >&2; exit 1; }
-  aws sts get-caller-identity >/dev/null
+  local caller_account_id
+  caller_account_id="$(aws sts get-caller-identity --query Account --output text)"
+
+  role_account_id_from_arn() {
+    local role_arn="$1"
+    echo "${role_arn}" | cut -d: -f5
+  }
+
+  role_arn_for_check_source() {
+    local source="$1"
+    local env_name role_key
+
+    case "${source}" in
+      accessModel.jenkins.runtimeRole)
+        ruby "${HELPER}" get --file "${VALUES_FILE}" --path accessModel.jenkins.runtimeRole.roleArn
+        ;;
+      accessModel.backend.validationRole)
+        ruby "${HELPER}" get --file "${VALUES_FILE}" --path accessModel.backend.validationRole.roleArn
+        ;;
+      *.iam.deployRole|*.iam.sourceRole|*.iam.targetRole)
+        env_name="${source%%.iam.*}"
+        role_key="${source##*.iam.}"
+        ruby "${HELPER}" get-env --file "${VALUES_FILE}" --environment "${env_name}" --path "iam.${role_key}.roleArn"
+        ;;
+      *)
+        echo ""
+        ;;
+    esac
+  }
+
+  should_validate_iam_role_in_current_account() {
+    local source="$1"
+    local role_arn role_account_id
+
+    role_arn="$(role_arn_for_check_source "${source}")"
+    role_account_id="$(role_account_id_from_arn "${role_arn}")"
+
+    if [[ -n "${role_account_id}" && "${role_account_id}" != "${caller_account_id}" ]]; then
+      echo "    skipping cross-account IAM role validation; role account=${role_account_id}, current account=${caller_account_id}"
+      return 1
+    fi
+
+    return 0
+  }
 
   local failures=0
   local kind name region source
@@ -112,7 +155,9 @@ run_existing_resource_checks() {
         aws eks describe-cluster --region "${region}" --name "${name}" >/dev/null || failures=1
         ;;
       iam_role)
-        aws iam get-role --role-name "${name}" >/dev/null || failures=1
+        if should_validate_iam_role_in_current_account "${source}"; then
+          aws iam get-role --role-name "${name}" >/dev/null || failures=1
+        fi
         ;;
     esac
   done < <("${check_command[@]}")

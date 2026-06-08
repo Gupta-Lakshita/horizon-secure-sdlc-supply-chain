@@ -56,7 +56,49 @@ for cmd in aws kubectl helm terraform; do
   command -v "${cmd}" >/dev/null || { echo "Missing required command: ${cmd}" >&2; exit 1; }
 done
 
-aws sts get-caller-identity >/dev/null
+CALLER_ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+
+role_account_id_from_arn() {
+  local role_arn="$1"
+  echo "${role_arn}" | cut -d: -f5
+}
+
+role_arn_for_check_source() {
+  local source="$1"
+  local env_name role_key
+
+  case "${source}" in
+    accessModel.jenkins.runtimeRole)
+      ruby "${HELPER}" get --file "${VALUES_FILE}" --path accessModel.jenkins.runtimeRole.roleArn
+      ;;
+    accessModel.backend.validationRole)
+      ruby "${HELPER}" get --file "${VALUES_FILE}" --path accessModel.backend.validationRole.roleArn
+      ;;
+    *.iam.deployRole|*.iam.sourceRole|*.iam.targetRole)
+      env_name="${source%%.iam.*}"
+      role_key="${source##*.iam.}"
+      ruby "${HELPER}" get-env --file "${VALUES_FILE}" --environment "${env_name}" --path "iam.${role_key}.roleArn"
+      ;;
+    *)
+      echo ""
+      ;;
+  esac
+}
+
+should_validate_iam_role_in_current_account() {
+  local source="$1"
+  local role_arn role_account_id
+
+  role_arn="$(role_arn_for_check_source "${source}")"
+  role_account_id="$(role_account_id_from_arn "${role_arn}")"
+
+  if [[ -n "${role_account_id}" && "${role_account_id}" != "${CALLER_ACCOUNT_ID}" ]]; then
+    echo "    skipping cross-account IAM role validation; role account=${role_account_id}, current account=${CALLER_ACCOUNT_ID}"
+    return 1
+  fi
+
+  return 0
+}
 
 if [[ -n "${ENVIRONMENT}" ]]; then
   CHECK_COMMAND=(ruby "${HELPER}" checks --file "${VALUES_FILE}" --environment "${ENVIRONMENT}")
@@ -82,7 +124,9 @@ while IFS=$'\t' read -r kind name region source; do
       aws eks describe-cluster --region "${region}" --name "${name}" >/dev/null || failures=$((failures + 1))
       ;;
     iam_role)
-      aws iam get-role --role-name "${name}" >/dev/null || failures=$((failures + 1))
+      if should_validate_iam_role_in_current_account "${source}"; then
+        aws iam get-role --role-name "${name}" >/dev/null || failures=$((failures + 1))
+      fi
       ;;
   esac
 done < <("${CHECK_COMMAND[@]}")
