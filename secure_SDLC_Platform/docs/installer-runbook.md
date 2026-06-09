@@ -459,6 +459,8 @@ bash secure_SDLC_Platform/scripts/install.sh \
   --auto-approve
 ```
 
+The installer keeps separate local bootstrap state files for each backend scope, such as `bootstrap-state-default.tfstate` and `bootstrap-state-prod.tfstate`, under `.generated/`. This prevents a PROD state-backend run from refreshing or modifying a non-prod state bucket when the operator has switched AWS credentials to the PROD account.
+
 If the client already has a state backend, set:
 
 ```yaml

@@ -356,20 +356,24 @@ reconcile_platform_iam_trust() {
 
 run_state() {
   echo "== Terraform state backend phase =="
-  local tfvars_file state_command
+  local tfvars_file state_command state_scope bootstrap_state bootstrap_tf_data
   if [[ -n "${ENVIRONMENT}" ]]; then
-    tfvars_file="${GENERATED_DIR}/state-backend-$(echo "${ENVIRONMENT}" | tr '[:upper:]' '[:lower:]').auto.tfvars.json"
+    state_scope="$(echo "${ENVIRONMENT}" | tr '[:upper:]' '[:lower:]')"
+    tfvars_file="${GENERATED_DIR}/state-backend-${state_scope}.auto.tfvars.json"
     state_command=(ruby "${HELPER}" state-tfvars --file "${VALUES_FILE}" --environment "${ENVIRONMENT}")
   else
+    state_scope="default"
     tfvars_file="${GENERATED_DIR}/state-backend.auto.tfvars.json"
     state_command=(ruby "${HELPER}" state-tfvars --file "${VALUES_FILE}")
   fi
+  bootstrap_state="${GENERATED_DIR}/bootstrap-state-${state_scope}.tfstate"
+  bootstrap_tf_data="${GENERATED_DIR}/.terraform-bootstrap-${state_scope}"
   "${state_command[@]}" > "${tfvars_file}"
-  [[ "${DRY_RUN}" == "true" ]] && { echo "Dry-run: would initialize and plan Terraform state backend resources."; echo "Generated: ${tfvars_file}"; return; }
-  terraform -chdir="${ROOT_DIR}/terraform/bootstrap" init
-  terraform -chdir="${ROOT_DIR}/terraform/bootstrap" plan -var-file="${tfvars_file}"
+  [[ "${DRY_RUN}" == "true" ]] && { echo "Dry-run: would initialize and plan Terraform state backend resources."; echo "Generated: ${tfvars_file}"; echo "Bootstrap state: ${bootstrap_state}"; return; }
+  TF_DATA_DIR="${bootstrap_tf_data}" terraform -chdir="${ROOT_DIR}/terraform/bootstrap" init
+  TF_DATA_DIR="${bootstrap_tf_data}" terraform -chdir="${ROOT_DIR}/terraform/bootstrap" plan -state="${bootstrap_state}" -var-file="${tfvars_file}"
   if [[ "${AUTO_APPROVE}" == "true" ]]; then
-    terraform -chdir="${ROOT_DIR}/terraform/bootstrap" apply -auto-approve -var-file="${tfvars_file}"
+    TF_DATA_DIR="${bootstrap_tf_data}" terraform -chdir="${ROOT_DIR}/terraform/bootstrap" apply -auto-approve -state="${bootstrap_state}" -var-file="${tfvars_file}"
   else
     echo "Plan completed. Re-run with --auto-approve to apply state backend resources."
   fi

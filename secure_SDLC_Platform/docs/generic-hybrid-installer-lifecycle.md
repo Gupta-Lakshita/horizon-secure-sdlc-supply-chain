@@ -258,6 +258,8 @@ bash secure_SDLC_Platform/scripts/install.sh \
   --auto-approve
 ```
 
+Each `state` run uses an isolated local bootstrap state file under `.generated/`, so account-local state buckets can be created from their own AWS account credentials without Terraform trying to refresh resources from another account.
+
 ### Environment Infrastructure
 
 Dry-run:
