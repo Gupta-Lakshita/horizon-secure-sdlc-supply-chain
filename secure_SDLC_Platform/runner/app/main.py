@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import tempfile
 import uuid
+import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from pathlib import Path
 from statistics import mean
@@ -35,6 +36,8 @@ class RunnerRequest(BaseModel):
     buildNumber: Optional[str] = None
     buildUrl: Optional[str] = None
     executionMode: Optional[str] = None
+    executionStage: Optional[str] = None
+    stageName: Optional[str] = None
     parameters: Dict[str, Any] = Field(default_factory=dict)
     payload: Dict[str, Any] = Field(default_factory=dict)
 
@@ -43,8 +46,11 @@ class RunnerResponse(BaseModel):
     status: str
     requestId: str
     planId: Optional[str] = None
+    executionStage: Optional[str] = None
     message: str
     executedActions: List[str] = Field(default_factory=list)
+    availableStages: List[str] = Field(default_factory=list)
+    reportSummary: Optional[Dict[str, Any]] = None
 
 
 class RunnerConfig:
@@ -95,6 +101,61 @@ def action_workspace(request_id: str) -> Path:
     return path
 
 
+def runner_context_path(request_id: str) -> Path:
+    return action_workspace(request_id) / "runner-context.json"
+
+
+def load_runner_context(request: RunnerRequest) -> Dict[str, Any]:
+    run_dir = action_workspace(request.requestId)
+    payload = request.payload or request.parameters or {}
+    context: Dict[str, Any] = {
+        "requestId": request.requestId,
+        "runDir": run_dir,
+        "project": {"name": str(payload.get("PROJECT_NAME") or request.jobName or request.requestId)},
+        "requestPayload": payload,
+        "runner": {
+            "clientId": request.clientId or payload.get("CLIENT_ID") or config.client_id,
+            "installationId": request.installationId or payload.get("INSTALLATION_ID") or config.installation_id,
+            "jobName": request.jobName,
+            "buildNumber": request.buildNumber,
+            "buildUrl": request.buildUrl,
+        },
+    }
+    path = runner_context_path(request.requestId)
+    if path.exists():
+        try:
+            saved = json.loads(path.read_text())
+        except json.JSONDecodeError:
+            saved = {}
+        context.update(saved)
+        context["runDir"] = Path(context.get("runDir") or run_dir)
+        if context.get("sourceDir"):
+            context["sourceDir"] = Path(context["sourceDir"])
+        context["requestPayload"] = payload
+        context["project"] = {"name": str(payload.get("PROJECT_NAME") or context.get("project", {}).get("name") or request.jobName or request.requestId)}
+        context["runner"] = {
+            **(context.get("runner") or {}),
+            "clientId": request.clientId or payload.get("CLIENT_ID") or config.client_id,
+            "installationId": request.installationId or payload.get("INSTALLATION_ID") or config.installation_id,
+            "jobName": request.jobName,
+            "buildNumber": request.buildNumber,
+            "buildUrl": request.buildUrl,
+        }
+    return context
+
+
+def save_runner_context(context: Dict[str, Any]) -> None:
+    path = runner_context_path(context["requestId"])
+    serializable: Dict[str, Any] = {}
+    for key in ("requestId", "project", "requestPayload", "runner", "git", "image", "artifact"):
+        if key in context:
+            serializable[key] = context[key]
+    serializable["runDir"] = str(context["runDir"])
+    if context.get("sourceDir"):
+        serializable["sourceDir"] = str(context["sourceDir"])
+    path.write_text(json.dumps(serializable, indent=2, sort_keys=True))
+
+
 def command_text(args: List[str]) -> str:
     return " ".join(args)
 
@@ -129,6 +190,11 @@ def run_command(
     if check and result.returncode != 0:
         raise HTTPException(status_code=500, detail=f"Action command failed ({result.returncode}): {command_text(args)}")
     return result
+
+
+def command_output_tail(result: subprocess.CompletedProcess, max_chars: int = 4000) -> str:
+    output = "\n".join(part for part in [result.stdout, result.stderr] if part)
+    return output[-max_chars:] if output else ""
 
 
 def render_value(value: Any, context: Dict[str, Any]) -> Any:
@@ -192,6 +258,225 @@ def action_report_dir(action: Dict[str, Any], context: Dict[str, Any], default_n
 def write_json(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, indent=2, sort_keys=True))
+
+
+def relative_path(path: Path, base: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(base.resolve()))
+    except ValueError:
+        return str(path)
+
+
+def xml_local_name(tag: str) -> str:
+    return tag.rsplit("}", 1)[-1] if "}" in tag else tag
+
+
+def parse_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def parse_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return default
+
+
+def junit_case_status(case: ET.Element) -> str:
+    for child in list(case):
+        name = xml_local_name(child.tag)
+        if name == "failure":
+            return "FAILED"
+        if name == "error":
+            return "ERROR"
+        if name == "skipped":
+            return "SKIPPED"
+    return "PASSED"
+
+
+def parse_junit_reports(report_dir: Path, context: Dict[str, Any], max_cases: int = 100) -> Dict[str, Any]:
+    reports: List[Dict[str, Any]] = []
+    test_cases: List[Dict[str, Any]] = []
+    total = failed = errored = skipped = passed = 0
+    duration_seconds = 0.0
+
+    for xml_path in sorted(report_dir.rglob("*.xml")):
+        try:
+            root = ET.parse(xml_path).getroot()
+        except (ET.ParseError, OSError):
+            continue
+
+        suites = [item for item in root.iter() if xml_local_name(item.tag) == "testsuite"]
+        cases = [item for item in root.iter() if xml_local_name(item.tag) == "testcase"]
+        report_total = len(cases) or sum(parse_int(suite.attrib.get("tests")) for suite in suites)
+        report_failed = 0
+        report_errored = 0
+        report_skipped = 0
+        report_duration = 0.0
+
+        for suite in suites:
+            if not cases:
+                report_failed += parse_int(suite.attrib.get("failures"))
+                report_errored += parse_int(suite.attrib.get("errors"))
+                report_skipped += parse_int(suite.attrib.get("skipped"))
+            report_duration += parse_float(suite.attrib.get("time"))
+
+        for case in cases:
+            status = junit_case_status(case)
+            case_duration = parse_float(case.attrib.get("time"))
+            report_duration += case_duration if not suites else 0.0
+            if status == "FAILED":
+                report_failed += 1
+            elif status == "ERROR":
+                report_errored += 1
+            elif status == "SKIPPED":
+                report_skipped += 1
+            if len(test_cases) < max_cases:
+                failure_text = ""
+                for child in list(case):
+                    if xml_local_name(child.tag) in {"failure", "error"}:
+                        failure_text = (child.attrib.get("message") or child.text or "").strip()
+                        break
+                test_cases.append({
+                    "name": case.attrib.get("name") or "unnamed test",
+                    "className": case.attrib.get("classname") or "",
+                    "status": status,
+                    "durationSeconds": round(case_duration, 3),
+                    "failure": failure_text[:1000],
+                })
+
+        report_passed = max(report_total - report_failed - report_errored - report_skipped, 0)
+        reports.append({
+            "path": relative_path(xml_path, context["runDir"]),
+            "tests": report_total,
+            "passed": report_passed,
+            "failed": report_failed,
+            "errors": report_errored,
+            "skipped": report_skipped,
+            "durationSeconds": round(report_duration, 3),
+        })
+        total += report_total
+        failed += report_failed
+        errored += report_errored
+        skipped += report_skipped
+        passed += report_passed
+        duration_seconds += report_duration
+
+    return {
+        "junitReports": reports,
+        "total": total,
+        "passed": passed,
+        "failed": failed,
+        "errors": errored,
+        "skipped": skipped,
+        "durationSeconds": round(duration_seconds, 3),
+        "testCases": test_cases,
+        "testCaseLimit": max_cases,
+    }
+
+
+def report_artifacts(report_dir: Path, context: Dict[str, Any]) -> Dict[str, Any]:
+    artifacts: List[Dict[str, str]] = []
+    typed_patterns = [
+        ("junit", "*.xml"),
+        ("json", "*.json"),
+        ("html", "html-report/index.html"),
+        ("html", "**/index.html"),
+        ("screenshot", "**/*.png"),
+        ("video", "**/*.webm"),
+        ("trace", "**/*.zip"),
+    ]
+    seen = set()
+    for artifact_type, pattern in typed_patterns:
+        for path in sorted(report_dir.glob(pattern)):
+            if not path.is_file():
+                continue
+            key = str(path.resolve())
+            if key in seen:
+                continue
+            seen.add(key)
+            artifacts.append({
+                "type": artifact_type,
+                "path": relative_path(path, context["runDir"]),
+            })
+            if len(artifacts) >= 100:
+                break
+    counts: Dict[str, int] = {}
+    for artifact in artifacts:
+        counts[artifact["type"]] = counts.get(artifact["type"], 0) + 1
+    return {"items": artifacts, "counts": counts}
+
+
+def sync_relative_report_dir(source_dir: Path, report_dir: Path, action: Dict[str, Any]) -> None:
+    configured = Path(str(action.get("reportDir") or "reports/selenium"))
+    if configured.is_absolute():
+        return
+    source_report_dir = source_dir / configured
+    if not source_report_dir.exists():
+        return
+    if source_report_dir.resolve() == report_dir.resolve():
+        return
+    shutil.copytree(source_report_dir, report_dir, dirs_exist_ok=True)
+
+
+def print_quality_summary(summary: Dict[str, Any]) -> None:
+    print("== Horizon validation evidence ==", flush=True)
+    print(f"Tool: {summary.get('toolName') or summary.get('tool')}", flush=True)
+    print(f"Status: {summary.get('status')}", flush=True)
+    if summary.get("targetAppUrl"):
+        print(f"Target: {summary['targetAppUrl']}", flush=True)
+    print(
+        "Tests: total={total} passed={passed} failed={failed} errors={errors} skipped={skipped} duration={duration}s".format(
+            total=summary.get("totalTests", 0),
+            passed=summary.get("passedTests", 0),
+            failed=summary.get("failedTests", 0),
+            errors=summary.get("errorTests", 0),
+            skipped=summary.get("skippedTests", 0),
+            duration=summary.get("durationSeconds", 0),
+        ),
+        flush=True,
+    )
+    for case in (summary.get("testCases") or [])[:20]:
+        label = f"{case.get('className') + ' - ' if case.get('className') else ''}{case.get('name')}"
+        print(f" - [{case.get('status')}] {label}", flush=True)
+    artifacts = summary.get("artifacts", {}).get("counts", {})
+    if artifacts:
+        print(f"Artifacts: {artifacts}", flush=True)
+
+
+def collect_report_summaries(context: Dict[str, Any]) -> List[Dict[str, Any]]:
+    report_root = context["runDir"] / "reports"
+    if not report_root.exists():
+        return []
+    summaries: List[Dict[str, Any]] = []
+    for path in sorted(report_root.rglob("summary.json")):
+        try:
+            summary = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        summary.setdefault("reportDir", relative_path(path.parent, context["runDir"]))
+        artifact = context.get("artifact", {})
+        if artifact.get("bucket") and artifact.get("prefix"):
+            summary["s3Uri"] = f"s3://{artifact['bucket']}/{artifact['prefix'].strip('/')}/test-results/{relative_path(path.parent, report_root)}"
+        summaries.append(summary)
+    return summaries
+
+
+def write_evidence_index(report_root: Path, context: Dict[str, Any], bucket: str, prefix: str) -> None:
+    summaries = collect_report_summaries(context)
+    index = {
+        "status": "COMPLETED",
+        "requestId": context["requestId"],
+        "project": context.get("project", {}),
+        "git": context.get("git", {}),
+        "generatedAt": utc_now().isoformat(),
+        "s3Prefix": f"s3://{bucket}/{prefix}/test-results/",
+        "reports": summaries,
+    }
+    write_json(report_root / "evidence-index.json", index)
 
 
 def normalize_http_url(value: Any) -> str:
@@ -634,6 +919,7 @@ def execute_publish_reports(action: Dict[str, Any], context: Dict[str, Any]) -> 
     if not report_root.exists():
         report_root.mkdir(parents=True, exist_ok=True)
         write_json(report_root / "summary.json", {"status": "NO_REPORTS", "message": "No validation reports were produced."})
+    write_evidence_index(report_root, context, bucket, prefix)
     run_command(["aws", "s3", "sync", str(report_root), f"s3://{bucket}/{prefix}/test-results/", "--region", region], env=role_env)
 
 
@@ -641,11 +927,20 @@ def execute_quality_ui(action: Dict[str, Any], context: Dict[str, Any]) -> None:
     source_dir = get_source_dir(context)
     report_dir = action_report_dir(action, context, "selenium")
     target_url = normalize_http_url(action.get("targetAppUrl"))
-    env = {"TARGET_APP_URL": target_url, "APPLICATION_URL": target_url, "APP_URL": target_url}
-    status_code = 0
+    env = {
+        "TARGET_APP_URL": target_url,
+        "APPLICATION_URL": target_url,
+        "APP_URL": target_url,
+        "SELENIUM_REPORT_DIR": str(report_dir),
+        "CI": "true",
+    }
+    status_code: Optional[int] = None
     command = ""
+    output_tail = ""
+    framework = "unknown"
     try:
         if (source_dir / "package.json").exists():
+            framework = "node"
             if (source_dir / "package-lock.json").exists():
                 run_command(["npm", "ci"], cwd=source_dir)
             else:
@@ -660,21 +955,60 @@ def execute_quality_ui(action: Dict[str, Any], context: Dict[str, Any]) -> None:
             command = f"npm run {script}"
             result = run_command(["npm", "run", script], cwd=source_dir, env=env, check=False)
             status_code = result.returncode
+            output_tail = command_output_tail(result)
         elif (source_dir / "pom.xml").exists():
+            framework = "maven"
             command = "mvn -B -Dtest=*UITest* test"
             result = run_command(["mvn", "-B", "-Dtest=*UITest*", f"-Dsurefire.reportsDirectory={report_dir}", "test"], cwd=source_dir, env=env, check=False)
             status_code = result.returncode
+            output_tail = command_output_tail(result)
         else:
             raise HTTPException(status_code=422, detail="No supported UI test framework found.")
     finally:
-        write_json(report_dir / "summary.json", {
+        sync_relative_report_dir(source_dir, report_dir, action)
+        junit = parse_junit_reports(report_dir, context)
+        artifacts = report_artifacts(report_dir, context)
+        summary = {
+            "tool": "selenium",
+            "toolName": "UI End-to-End Test",
+            "framework": framework,
             "status": "PASSED" if status_code == 0 else "FAILED",
             "targetAppUrl": target_url,
             "command": command,
+            "exitCode": status_code,
             "requestId": context["requestId"],
+            "project": context.get("project", {}),
+            "git": context.get("git", {}),
+            "runner": context.get("runner", {}),
+            "reportDir": relative_path(report_dir, context["runDir"]),
+            "totalTests": junit["total"],
+            "passedTests": junit["passed"],
+            "failedTests": junit["failed"],
+            "errorTests": junit["errors"],
+            "skippedTests": junit["skipped"],
+            "durationSeconds": junit["durationSeconds"],
+            "junitReports": junit["junitReports"],
+            "testCases": junit["testCases"],
+            "artifacts": artifacts,
+        }
+        if status_code not in {0, None}:
+            summary["outputTail"] = output_tail
+        write_json(report_dir / "summary.json", summary)
+        write_json(report_dir / "evidence.json", {
+            **summary,
+            "generatedAt": utc_now().isoformat(),
+            "evidenceType": "validation.ui",
         })
+        print_quality_summary(summary)
     if status_code != 0 and as_bool(action.get("required"), True):
-        raise HTTPException(status_code=500, detail="UI end-to-end test failed")
+        raise HTTPException(status_code=500, detail={
+            "message": "UI end-to-end test failed",
+            "targetAppUrl": target_url,
+            "command": command,
+            "exitCode": status_code,
+            "reportDir": str(report_dir.relative_to(context["runDir"])),
+            "outputTail": output_tail,
+        })
 
 
 def _find_first(source_dir: Path, candidates: List[str]) -> str:
@@ -1138,13 +1472,118 @@ def execute_eks_deploy(action: Dict[str, Any], context: Dict[str, Any]) -> None:
         run_command(["aws", "s3", "cp", str(path), f"s3://{artifact['bucket']}/{artifact['prefix']}/{(target_env or 'deploy').lower()}/deployment.json", "--region", region], env=role_env)
 
 
+STAGE_ALIASES = {
+    "checkout": "checkout",
+    "source": "checkout",
+    "clone": "checkout",
+    "scan": "scan",
+    "validate": "scan",
+    "validation": "scan",
+    "quality": "scan",
+    "security": "scan",
+    "ui": "ui-test",
+    "ui-test": "ui-test",
+    "ui-e2e": "ui-test",
+    "selenium": "ui-test",
+    "api": "api-test",
+    "api-test": "api-test",
+    "api-regression": "api-test",
+    "newman": "api-test",
+    "performance": "performance-test",
+    "performance-test": "performance-test",
+    "jmeter": "performance-test",
+    "code-quality": "code-quality",
+    "sonarqube": "code-quality",
+    "static-security": "static-security",
+    "checkmarx": "static-security",
+    "container-iac": "container-iac",
+    "container-iac-vulnerability": "container-iac",
+    "trivy": "container-iac",
+    "policy": "policy-validation",
+    "policy-validation": "policy-validation",
+    "opa": "policy-validation",
+    "validation-results": "validation-results",
+    "publish-validation-results": "validation-results",
+    "build": "build",
+    "compile": "build",
+    "package": "build",
+    "publish": "publish",
+    "push": "publish",
+    "artifact": "publish",
+    "deploy": "deploy",
+    "release": "deploy",
+}
+
+
+def normalize_execution_stage(value: Optional[str]) -> str:
+    key = re.sub(r"[^a-z0-9]+", "-", str(value or "").strip().lower()).strip("-")
+    return STAGE_ALIASES.get(key, key)
+
+
+def action_stage(action: Dict[str, Any]) -> str:
+    action_type = action.get("type") or action.get("action") or ""
+    action_name = str(action.get("name") or "")
+    if action_type == "log":
+        return "checkout"
+    if action_type in {"git.checkout", "release.load_metadata"}:
+        return "checkout"
+    if action_type == "security.preflight":
+        return "scan"
+    if action_type == "quality.ui":
+        return "ui-test"
+    if action_type == "quality.api":
+        return "api-test"
+    if action_type == "quality.performance":
+        return "performance-test"
+    if action_type == "quality.code":
+        return "code-quality"
+    if action_type == "security.static_code":
+        return "static-security"
+    if action_type == "security.container_iac":
+        return "container-iac"
+    if action_type == "security.policy":
+        return "policy-validation"
+    if action_type == "project.build":
+        return "build"
+    if action_type == "artifact.publish_reports":
+        return "validation-results"
+    if action_type == "artifact.context" and "validation" in action_name:
+        return "validation-results"
+    if action_type in {"image.build_push", "artifact.context", "artifact.publish", "release.promote_image"}:
+        return "publish"
+    if action_type in {"eks.deploy", "release.publish_approval"}:
+        return "deploy"
+    return "build"
+
+
+def available_action_stages(actions: List[Dict[str, Any]]) -> List[str]:
+    order = [
+        "checkout",
+        "scan",
+        "ui-test",
+        "api-test",
+        "performance-test",
+        "code-quality",
+        "static-security",
+        "container-iac",
+        "policy-validation",
+        "build",
+        "publish",
+        "validation-results",
+        "deploy",
+    ]
+    stages = {action_stage(action) for action in actions}
+    return [stage for stage in order if stage in stages]
+
+
+def actions_for_stage(actions: List[Dict[str, Any]], execution_stage: str) -> List[Dict[str, Any]]:
+    if not execution_stage:
+        return actions
+    return [action for action in actions if action_stage(action) == execution_stage]
+
+
 def execute_actions(actions: List[Dict[str, Any]], request: RunnerRequest) -> List[str]:
-    context: Dict[str, Any] = {
-        "requestId": request.requestId,
-        "runDir": action_workspace(request.requestId),
-        "project": {"name": str((request.payload or request.parameters or {}).get("PROJECT_NAME") or request.jobName or request.requestId)},
-        "requestPayload": request.payload or request.parameters or {},
-    }
+    context = load_runner_context(request)
     executed = []
     for idx, action in enumerate(actions):
         action_type = action.get("type") or action.get("action")
@@ -1153,10 +1592,12 @@ def execute_actions(actions: List[Dict[str, Any]], request: RunnerRequest) -> Li
         if action_type == "log":
             print(action.get("message", name), flush=True)
             executed.append(name)
+            save_runner_context(context)
             continue
 
         if not config.execute_actions:
             executed.append(f"{name}:planned")
+            save_runner_context(context)
             continue
 
         if action_type == "shell":
@@ -1170,96 +1611,115 @@ def execute_actions(actions: List[Dict[str, Any]], request: RunnerRequest) -> Li
                 timeout=config.timeout_seconds,
             )
             executed.append(name)
+            save_runner_context(context)
             continue
 
         if action_type == "git.checkout":
             execute_git_checkout(action, context)
             executed.append(name)
+            save_runner_context(context)
             continue
 
         if action_type == "project.build":
             execute_project_build(render_value(action, context), context)
             executed.append(name)
+            save_runner_context(context)
             continue
 
         if action_type == "image.build_push":
             execute_image_build_push(action, context)
             executed.append(name)
+            save_runner_context(context)
             continue
 
         if action_type == "artifact.publish":
             execute_artifact_publish(action, context)
             executed.append(name)
+            save_runner_context(context)
             continue
 
         if action_type == "artifact.context":
             execute_artifact_context(action, context)
             executed.append(name)
+            save_runner_context(context)
             continue
 
         if action_type == "artifact.publish_reports":
             execute_publish_reports(action, context)
             executed.append(name)
+            save_runner_context(context)
             continue
 
         if action_type == "quality.ui":
             execute_quality_ui(action, context)
             executed.append(name)
+            save_runner_context(context)
             continue
 
         if action_type == "quality.api":
             execute_quality_api(action, context)
             executed.append(name)
+            save_runner_context(context)
             continue
 
         if action_type == "quality.performance":
             execute_quality_performance(action, context)
             executed.append(name)
+            save_runner_context(context)
             continue
 
         if action_type == "quality.code":
             execute_quality_code(action, context)
             executed.append(name)
+            save_runner_context(context)
             continue
 
         if action_type == "security.preflight":
             execute_security_preflight(action, context)
             executed.append(name)
+            save_runner_context(context)
             continue
 
         if action_type == "security.static_code":
             execute_security_static_code(action, context)
             executed.append(name)
+            save_runner_context(context)
             continue
 
         if action_type == "security.container_iac":
             execute_security_container_iac(action, context)
             executed.append(name)
+            save_runner_context(context)
             continue
 
         if action_type == "security.policy":
             execute_security_policy(action, context)
             executed.append(name)
+            save_runner_context(context)
             continue
 
         if action_type == "release.load_metadata":
             execute_release_load_metadata(action, context)
             executed.append(name)
+            save_runner_context(context)
             continue
 
         if action_type == "release.promote_image":
             execute_release_promote_image(action, context)
             executed.append(name)
+            save_runner_context(context)
             continue
 
         if action_type == "release.publish_approval":
             execute_release_publish_approval(action, context)
             executed.append(name)
+            save_runner_context(context)
             continue
 
         if action_type == "eks.deploy":
             execute_eks_deploy(action, context)
             executed.append(name)
+            save_runner_context(context)
             continue
 
         raise HTTPException(status_code=422, detail=f"Unsupported runner action type: {action_type}")
@@ -1282,19 +1742,39 @@ def healthz() -> Dict[str, Any]:
 
 @app.post("/v1/execute", response_model=RunnerResponse)
 def execute(request: RunnerRequest) -> RunnerResponse:
-    emit_event("requested", request, None, {"payloadKeys": sorted((request.payload or request.parameters).keys())})
+    execution_stage = normalize_execution_stage(request.executionStage)
+    emit_event("requested", request, None, {
+        "payloadKeys": sorted((request.payload or request.parameters).keys()),
+        "executionStage": execution_stage or "all",
+    })
     plan = request_execution_plan(request)
     signed_plan = validate_plan(plan)
     plan_id = signed_plan.get("planId") or signed_plan.get("plan_id") or plan.get("planId")
     actions = signed_plan.get("actions") or signed_plan.get("steps") or []
-    executed = execute_actions(actions, request)
-    emit_event("completed", request, plan_id, {"executedActions": executed})
+    available_stages = available_action_stages(actions)
+    selected_actions = actions_for_stage(actions, execution_stage)
+    if execution_stage and not selected_actions:
+        message = f"No execution actions mapped to stage '{execution_stage}'."
+        executed: List[str] = []
+    else:
+        executed = execute_actions(selected_actions, request)
+        message = f"Execution stage '{execution_stage}' completed" if execution_stage else "Execution plan completed"
+    report_summary = {"reports": collect_report_summaries(load_runner_context(request))}
+    emit_event("completed", request, plan_id, {
+        "executedActions": executed,
+        "executionStage": execution_stage or "all",
+        "availableStages": available_stages,
+        "reportSummary": report_summary,
+    })
     return RunnerResponse(
         status="completed",
         requestId=request.requestId,
         planId=plan_id,
-        message="Execution plan completed",
+        executionStage=execution_stage or None,
+        message=message,
         executedActions=executed,
+        availableStages=available_stages,
+        reportSummary=report_summary,
     )
 
 
