@@ -56,8 +56,7 @@ RUN set -eux; \
     kubectl version --client=true; \
     jmeter --version
 
-RUN npm install -g newman newman-reporter-htmlextra @playwright/test@1.44.1 \
-    && npx playwright install chromium
+RUN npm install -g newman newman-reporter-htmlextra @playwright/test@1.44.1
 
 COPY --from=trivy /usr/local/bin/trivy /usr/local/bin/trivy
 
