@@ -232,6 +232,8 @@ components:
     cacheEnabled: true
     gracePeriodHours: 24
     workDir: /var/lib/horizon-runner
+    uiTestIsolated: false
+    uiTestImage: mcr.microsoft.com/playwright:v1.44.1-jammy
     publicKeySecretName: horizon-license-public-key
     publicKeySecretKey: publicKeyPem
   sonarqube:

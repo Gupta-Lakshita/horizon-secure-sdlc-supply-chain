@@ -490,6 +490,12 @@ spec:
               value: {{ default 24 $runner.gracePeriodHours | quote }}
             - name: HORIZON_RUNNER_WORK_DIR
               value: {{ default "/var/lib/horizon-runner" $runner.workDir | quote }}
+            - name: HORIZON_RUNNER_NAMESPACE
+              value: {{ .Release.Namespace | quote }}
+            - name: HORIZON_UI_TEST_ISOLATED
+              value: {{ default false $runner.uiTestIsolated | quote }}
+            - name: HORIZON_UI_TEST_IMAGE
+              value: {{ default "mcr.microsoft.com/playwright:v1.44.1-jammy" $runner.uiTestImage | quote }}
             - name: HORIZON_PUBLIC_KEY_PATH
               value: /etc/horizon/license/publicKeyPem
           volumeMounts:

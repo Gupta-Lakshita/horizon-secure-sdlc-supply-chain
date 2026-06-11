@@ -2,6 +2,7 @@ import base64
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -66,6 +67,9 @@ class RunnerConfig:
     timeout_seconds = int(os.getenv("HORIZON_RUNNER_ACTION_TIMEOUT_SECONDS", "1800"))
     kaniko_image = os.getenv("HORIZON_KANIKO_IMAGE", "gcr.io/kaniko-project/executor:v1.23.2")
     keep_build_jobs = os.getenv("HORIZON_RUNNER_KEEP_BUILD_JOBS", "false").lower() == "true"
+    namespace = os.getenv("HORIZON_RUNNER_NAMESPACE", os.getenv("POD_NAMESPACE", "default"))
+    ui_test_isolated = os.getenv("HORIZON_UI_TEST_ISOLATED", "false").lower() == "true"
+    ui_test_image = os.getenv("HORIZON_UI_TEST_IMAGE", "mcr.microsoft.com/playwright:v1.44.1-jammy")
 
 
 config = RunnerConfig()
@@ -422,12 +426,108 @@ def sync_relative_report_dir(source_dir: Path, report_dir: Path, action: Dict[st
     shutil.copytree(source_report_dir, report_dir, dirs_exist_ok=True)
 
 
+def extract_report_archive_from_logs(logs: str, report_dir: Path) -> bool:
+    match = re.search(r"__HORIZON_REPORT_TGZ_BEGIN__\s*(.*?)\s*__HORIZON_REPORT_TGZ_END__", logs, re.S)
+    if not match:
+        return False
+    archive_text = re.sub(r"\s+", "", match.group(1))
+    if not archive_text:
+        return False
+    archive_path = report_dir / "report-archive.tgz"
+    archive_path.write_bytes(base64.b64decode(archive_text))
+    run_command(["tar", "-xzf", str(archive_path), "-C", str(report_dir)], check=False)
+    archive_path.unlink(missing_ok=True)
+    return True
+
+
+def execute_isolated_node_ui_test(source_dir: Path, report_dir: Path, target_url: str, script: str, context: Dict[str, Any]) -> subprocess.CompletedProcess:
+    git_context = context.get("git") or {}
+    repo_url = git_context.get("repoUrl")
+    branch = git_context.get("branch") or "main"
+    if not repo_url:
+        raise HTTPException(status_code=422, detail="Isolated UI test execution requires a checked-out Git repository URL.")
+
+    job_name = safe_file_token(f"horizon-ui-{context['requestId']}")[:55].strip("-")
+    report_subdir = relative_path(report_dir, context["runDir"])
+    script_body = f"""
+set -eu
+work=/workspace/source
+report_dir=/workspace/{shlex.quote(report_subdir)}
+rm -rf "$work"
+mkdir -p "$work" "$report_dir"
+git clone --depth 1 --branch {shlex.quote(branch)} {shlex.quote(repo_url)} "$work"
+cd "$work"
+export TARGET_APP_URL={shlex.quote(target_url)}
+export APPLICATION_URL={shlex.quote(target_url)}
+export APP_URL={shlex.quote(target_url)}
+export SELENIUM_REPORT_DIR="$report_dir"
+export CI=true
+if [ -f package-lock.json ]; then npm ci; else npm install; fi
+set +e
+npm run {shlex.quote(script)}
+status=$?
+set -e
+mkdir -p "$report_dir"
+echo __HORIZON_REPORT_TGZ_BEGIN__
+tar -C "$report_dir" -czf - . 2>/dev/null | base64 | tr -d '\n'
+echo
+echo __HORIZON_REPORT_TGZ_END__
+exit "$status"
+""".strip()
+    manifest = {
+        "apiVersion": "batch/v1",
+        "kind": "Job",
+        "metadata": {"name": job_name, "namespace": config.namespace, "labels": {"app": "horizon-ui-test", "managed-by": "horizon-runner"}},
+        "spec": {
+            "backoffLimit": 0,
+            "ttlSecondsAfterFinished": 600,
+            "template": {
+                "metadata": {"labels": {"job-name": job_name, "app": "horizon-ui-test"}},
+                "spec": {
+                    "restartPolicy": "Never",
+                    "serviceAccountName": os.getenv("HORIZON_RUNNER_SERVICE_ACCOUNT", "jenkins"),
+                    "containers": [{
+                        "name": "ui-test",
+                        "image": config.ui_test_image,
+                        "imagePullPolicy": "IfNotPresent",
+                        "command": ["/bin/sh", "-lc", script_body],
+                    }],
+                },
+            },
+        },
+    }
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as handle:
+        json.dump(manifest, handle)
+        manifest_path = handle.name
+    try:
+        run_command(["kubectl", "delete", "job", job_name, "-n", config.namespace, "--ignore-not-found=true"], check=False)
+        run_command(["kubectl", "apply", "-f", manifest_path])
+        status = run_command(["kubectl", "wait", f"job/{job_name}", "-n", config.namespace, "--for=condition=complete", "--timeout=1800s"], check=False, timeout=1860)
+        if status.returncode != 0:
+            failed = run_command(["kubectl", "wait", f"job/{job_name}", "-n", config.namespace, "--for=condition=failed", "--timeout=5s"], check=False, timeout=10)
+            if failed.returncode != 0:
+                print(f"UI test job {job_name} did not complete cleanly before timeout.", flush=True)
+        logs = run_command(["kubectl", "logs", f"job/{job_name}", "-n", config.namespace], check=False)
+        extract_report_archive_from_logs((logs.stdout or "") + "\n" + (logs.stderr or ""), report_dir)
+        return subprocess.CompletedProcess(args=["kubectl", "job", job_name], returncode=status.returncode, stdout=logs.stdout, stderr=logs.stderr)
+    finally:
+        Path(manifest_path).unlink(missing_ok=True)
+        if not config.keep_build_jobs:
+            run_command(["kubectl", "delete", "job", job_name, "-n", config.namespace, "--ignore-not-found=true"], check=False)
+
+
 def print_quality_summary(summary: Dict[str, Any]) -> None:
     print("== Horizon validation evidence ==", flush=True)
     print(f"Tool: {summary.get('toolName') or summary.get('tool')}", flush=True)
     print(f"Status: {summary.get('status')}", flush=True)
     if summary.get("targetAppUrl"):
         print(f"Target: {summary['targetAppUrl']}", flush=True)
+    if summary.get("baseUrl"):
+        print(f"API Base URL: {summary['baseUrl']}", flush=True)
+    if summary.get("collection"):
+        print(f"Collection: {summary['collection']}", flush=True)
+    if summary.get("environment"):
+        print(f"Environment: {summary['environment']}", flush=True)
     print(
         "Tests: total={total} passed={passed} failed={failed} errors={errors} skipped={skipped} duration={duration}s".format(
             total=summary.get("totalTests", 0),
@@ -442,12 +542,29 @@ def print_quality_summary(summary: Dict[str, Any]) -> None:
     for case in (summary.get("testCases") or [])[:20]:
         label = f"{case.get('className') + ' - ' if case.get('className') else ''}{case.get('name')}"
         print(f" - [{case.get('status')}] {label}", flush=True)
+    for request in (summary.get("requests") or [])[:20]:
+        method = request.get("method") or "HTTP"
+        status_code = request.get("statusCode") or "n/a"
+        latency = request.get("responseTimeMs")
+        assertions = request.get("assertions") or {}
+        print(
+            " - [{status}] {method} {name} -> {code} ({latency}ms, assertions {passed}/{total})".format(
+                status=request.get("status", "UNKNOWN"),
+                method=method,
+                name=request.get("name") or request.get("url") or "request",
+                code=status_code,
+                latency=latency if latency is not None else "n/a",
+                passed=assertions.get("passed", 0),
+                total=assertions.get("total", 0),
+            ),
+            flush=True,
+        )
     artifacts = summary.get("artifacts", {}).get("counts", {})
     if artifacts:
         print(f"Artifacts: {artifacts}", flush=True)
 
 
-def collect_report_summaries(context: Dict[str, Any]) -> List[Dict[str, Any]]:
+def collect_report_summaries(context: Dict[str, Any], execution_stage: str = "") -> List[Dict[str, Any]]:
     report_root = context["runDir"] / "reports"
     if not report_root.exists():
         return []
@@ -458,6 +575,8 @@ def collect_report_summaries(context: Dict[str, Any]) -> List[Dict[str, Any]]:
         except (OSError, json.JSONDecodeError):
             continue
         summary.setdefault("reportDir", relative_path(path.parent, context["runDir"]))
+        if execution_stage and normalize_execution_stage(str(summary.get("stage") or "")) != execution_stage:
+            continue
         artifact = context.get("artifact", {})
         if artifact.get("bucket") and artifact.get("prefix"):
             summary["s3Uri"] = f"s3://{artifact['bucket']}/{artifact['prefix'].strip('/')}/test-results/{relative_path(path.parent, report_root)}"
@@ -941,19 +1060,23 @@ def execute_quality_ui(action: Dict[str, Any], context: Dict[str, Any]) -> None:
     try:
         if (source_dir / "package.json").exists():
             framework = "node"
-            if (source_dir / "package-lock.json").exists():
-                run_command(["npm", "ci"], cwd=source_dir)
-            else:
-                run_command(["npm", "install"], cwd=source_dir)
             script = detect_npm_script(source_dir, ["test:e2e", "e2e", "test:ui"])
             if not script:
                 raise HTTPException(status_code=422, detail="No UI end-to-end npm script found. Expected test:e2e, e2e, or test:ui.")
             package = json.loads((source_dir / "package.json").read_text())
             deps = {**package.get("dependencies", {}), **package.get("devDependencies", {})}
-            if "@playwright/test" in deps or "playwright" in deps:
-                run_command(["npx", "playwright", "install", "chromium"], cwd=source_dir, check=False)
             command = f"npm run {script}"
-            result = run_command(["npm", "run", script], cwd=source_dir, env=env, check=False)
+            if config.ui_test_isolated:
+                command = f"kubernetes job {config.ui_test_image}: npm run {script}"
+                result = execute_isolated_node_ui_test(source_dir, report_dir, target_url, script, context)
+            else:
+                if (source_dir / "package-lock.json").exists():
+                    run_command(["npm", "ci"], cwd=source_dir)
+                else:
+                    run_command(["npm", "install"], cwd=source_dir)
+                if "@playwright/test" in deps or "playwright" in deps:
+                    run_command(["npx", "playwright", "install", "chromium"], cwd=source_dir, check=False)
+                result = run_command(["npm", "run", script], cwd=source_dir, env=env, check=False)
             status_code = result.returncode
             output_tail = command_output_tail(result)
         elif (source_dir / "pom.xml").exists():
@@ -972,6 +1095,7 @@ def execute_quality_ui(action: Dict[str, Any], context: Dict[str, Any]) -> None:
             "tool": "selenium",
             "toolName": "UI End-to-End Test",
             "framework": framework,
+            "stage": "ui-test",
             "status": "PASSED" if status_code == 0 else "FAILED",
             "targetAppUrl": target_url,
             "command": command,
@@ -1019,12 +1143,139 @@ def _find_first(source_dir: Path, candidates: List[str]) -> str:
     return ""
 
 
+def _newman_url(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        raw = value.get("raw")
+        if raw:
+            return str(raw)
+        protocol = value.get("protocol") or ""
+        host = value.get("host") or []
+        path = value.get("path") or []
+        host_text = ".".join(str(part) for part in host) if isinstance(host, list) else str(host)
+        path_text = "/".join(str(part) for part in path) if isinstance(path, list) else str(path)
+        if host_text:
+            return f"{protocol + '://' if protocol else ''}{host_text}{'/' + path_text if path_text else ''}"
+    return ""
+
+
+def _newman_stat(stats: Dict[str, Any], key: str) -> Dict[str, int]:
+    value = stats.get(key) or {}
+    return {
+        "total": parse_int(value.get("total")),
+        "failed": parse_int(value.get("failed")),
+        "pending": parse_int(value.get("pending")),
+    }
+
+
+def parse_newman_results(report_dir: Path, context: Dict[str, Any], max_cases: int = 100) -> Dict[str, Any]:
+    results_path = report_dir / "results.json"
+    empty = {
+        "stats": {},
+        "requests": [],
+        "testCases": [],
+        "failedAssertions": [],
+        "durationSeconds": 0,
+    }
+    if not results_path.exists():
+        return empty
+    try:
+        data = json.loads(results_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return empty
+
+    run = data.get("run") or {}
+    stats = run.get("stats") or {}
+    timings = run.get("timings") or {}
+    duration_seconds = 0.0
+    try:
+        if timings.get("started") and timings.get("completed"):
+            duration_seconds = (parse_time(str(timings["completed"])) - parse_time(str(timings["started"]))).total_seconds()
+    except ValueError:
+        duration_seconds = 0.0
+
+    requests: List[Dict[str, Any]] = []
+    test_cases: List[Dict[str, Any]] = []
+    failed_assertions: List[Dict[str, Any]] = []
+    for execution in run.get("executions") or []:
+        item = execution.get("item") or {}
+        request = execution.get("request") or {}
+        response = execution.get("response") or {}
+        assertions = execution.get("assertions") or []
+        request_name = str(item.get("name") or request.get("name") or "API request")
+        request_assertions = []
+        failed_count = 0
+        skipped_count = 0
+        for assertion in assertions:
+            assertion_name = str(assertion.get("assertion") or assertion.get("name") or "assertion")
+            error = assertion.get("error") or {}
+            skipped = bool(assertion.get("skipped"))
+            status = "SKIPPED" if skipped else ("FAILED" if error else "PASSED")
+            if status == "FAILED":
+                failed_count += 1
+            if status == "SKIPPED":
+                skipped_count += 1
+            case = {
+                "name": assertion_name,
+                "className": request_name,
+                "status": status,
+            }
+            if error:
+                case["message"] = str(error.get("message") or error)
+                failed_assertions.append({
+                    "request": request_name,
+                    "assertion": assertion_name,
+                    "message": case["message"],
+                })
+            if len(test_cases) < max_cases:
+                test_cases.append(case)
+            request_assertions.append(case)
+
+        status_code = response.get("code") if isinstance(response, dict) else None
+        response_time = response.get("responseTime") if isinstance(response, dict) else None
+        total_assertions = len(request_assertions)
+        requests.append({
+            "name": request_name,
+            "method": str(request.get("method") or "").upper(),
+            "url": _newman_url(request.get("url")),
+            "status": "FAILED" if failed_count else "PASSED",
+            "statusCode": status_code,
+            "statusText": response.get("status") if isinstance(response, dict) else "",
+            "responseTimeMs": response_time,
+            "assertions": {
+                "total": total_assertions,
+                "passed": max(total_assertions - failed_count - skipped_count, 0),
+                "failed": failed_count,
+                "skipped": skipped_count,
+            },
+        })
+
+    assertion_stat = _newman_stat(stats, "assertions")
+    request_stat = _newman_stat(stats, "requests")
+    return {
+        "stats": {
+            "iterations": _newman_stat(stats, "iterations"),
+            "requests": request_stat,
+            "testScripts": _newman_stat(stats, "testScripts"),
+            "prerequestScripts": _newman_stat(stats, "prerequestScripts"),
+            "assertions": assertion_stat,
+        },
+        "requests": requests,
+        "testCases": test_cases,
+        "failedAssertions": failed_assertions,
+        "durationSeconds": round(duration_seconds, 3),
+    }
+
+
 def execute_quality_api(action: Dict[str, Any], context: Dict[str, Any]) -> None:
     source_dir = get_source_dir(context)
     report_dir = action_report_dir(action, context, "newman")
     collection = action.get("collectionPath") or _find_first(source_dir, [
         "tests/postman/horizon-demo-angular.postman_collection.json",
         "tests/postman/collection.json",
+        "tests/api/horizon-demo-api.collection.json",
+        "tests/api/collection.json",
     ])
     if not collection:
         matches = sorted((source_dir / "tests/postman").glob("*postman_collection.json")) if (source_dir / "tests/postman").exists() else []
@@ -1047,12 +1298,16 @@ def execute_quality_api(action: Dict[str, Any], context: Dict[str, Any]) -> None
         raise HTTPException(status_code=422, detail=f"Iteration data file not found: {data_file}")
 
     base_url = normalize_http_url(action.get("baseUrl"))
+    html_dir = report_dir / "html"
+    html_dir.mkdir(parents=True, exist_ok=True)
     cmd = [
         "newman", "run", collection,
         "--timeout-request", str(action.get("timeoutMs") or "30000"),
-        "--reporters", "cli,junit,json",
+        "--reporters", "cli,junit,json,htmlextra",
         "--reporter-junit-export", str(report_dir / "results.xml"),
         "--reporter-json-export", str(report_dir / "results.json"),
+        "--reporter-htmlextra-export", str(html_dir / "index.html"),
+        "--reporter-htmlextra-title", f"{context.get('project', {}).get('name') or context.get('jobName') or 'Horizon'} API Regression",
     ]
     if env_path:
         cmd.extend(["--environment", env_path])
@@ -1060,16 +1315,65 @@ def execute_quality_api(action: Dict[str, Any], context: Dict[str, Any]) -> None
         cmd.extend(["--iteration-data", data_file])
     if base_url:
         cmd.extend(["--env-var", f"baseUrl={base_url}", "--env-var", f"apiBaseUrl={base_url}"])
+    (report_dir / "newman-command.txt").write_text(shlex.join(cmd) + "\n")
     result = run_command(cmd, cwd=source_dir, check=False)
-    write_json(report_dir / "summary.json", {
+    output_tail = command_output_tail(result)
+    junit = parse_junit_reports(report_dir, context)
+    newman = parse_newman_results(report_dir, context)
+    artifacts = report_artifacts(report_dir, context)
+    assertion_stats = newman.get("stats", {}).get("assertions", {})
+    total_tests = junit["total"] or assertion_stats.get("total", 0)
+    failed_tests = junit["failed"] or assertion_stats.get("failed", 0)
+    skipped_tests = junit["skipped"] or assertion_stats.get("pending", 0)
+    passed_tests = junit["passed"] or max(total_tests - failed_tests - skipped_tests, 0)
+    summary = {
+        "tool": "newman",
+        "toolName": "API Regression Test",
+        "framework": "newman",
+        "stage": "api-test",
         "status": "PASSED" if result.returncode == 0 else "FAILED",
         "collection": collection,
         "environment": env_path,
         "iterationDataFile": data_file,
         "baseUrl": base_url,
+        "command": shlex.join(cmd),
+        "exitCode": result.returncode,
+        "requestId": context["requestId"],
+        "project": context.get("project", {}),
+        "git": context.get("git", {}),
+        "runner": context.get("runner", {}),
+        "reportDir": relative_path(report_dir, context["runDir"]),
+        "totalTests": total_tests,
+        "passedTests": passed_tests,
+        "failedTests": failed_tests,
+        "errorTests": junit["errors"],
+        "skippedTests": skipped_tests,
+        "durationSeconds": junit["durationSeconds"] or newman.get("durationSeconds", 0),
+        "junitReports": junit["junitReports"],
+        "testCases": junit["testCases"] or newman.get("testCases", []),
+        "newmanStats": newman.get("stats", {}),
+        "requests": newman.get("requests", []),
+        "failedAssertions": newman.get("failedAssertions", []),
+        "artifacts": artifacts,
+    }
+    if result.returncode != 0:
+        summary["outputTail"] = output_tail
+    write_json(report_dir / "summary.json", summary)
+    write_json(report_dir / "evidence.json", {
+        **summary,
+        "generatedAt": utc_now().isoformat(),
+        "evidenceType": "validation.api",
     })
+    print_quality_summary(summary)
     if result.returncode != 0 and as_bool(action.get("failOnError"), True):
-        raise HTTPException(status_code=500, detail="API regression test failed")
+        raise HTTPException(status_code=500, detail={
+            "message": "API regression test failed",
+            "collection": collection,
+            "baseUrl": base_url,
+            "exitCode": result.returncode,
+            "reportDir": str(report_dir.relative_to(context["runDir"])),
+            "outputTail": output_tail,
+        })
 
 
 def execute_quality_performance(action: Dict[str, Any], context: Dict[str, Any]) -> None:
@@ -1759,7 +2063,8 @@ def execute(request: RunnerRequest) -> RunnerResponse:
     else:
         executed = execute_actions(selected_actions, request)
         message = f"Execution stage '{execution_stage}' completed" if execution_stage else "Execution plan completed"
-    report_summary = {"reports": collect_report_summaries(load_runner_context(request))}
+    summary_stage = "" if execution_stage in {"", "validation-results"} else execution_stage
+    report_summary = {"reports": collect_report_summaries(load_runner_context(request), summary_stage)}
     emit_event("completed", request, plan_id, {
         "executedActions": executed,
         "executionStage": execution_stage or "all",
