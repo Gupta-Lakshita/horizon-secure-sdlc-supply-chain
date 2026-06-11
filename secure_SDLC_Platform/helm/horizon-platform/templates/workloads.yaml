@@ -492,6 +492,8 @@ spec:
               value: {{ default "/var/lib/horizon-runner" $runner.workDir | quote }}
             - name: HORIZON_RUNNER_NAMESPACE
               value: {{ .Release.Namespace | quote }}
+            - name: HORIZON_RUNNER_SERVICE_ACCOUNT
+              value: {{ default "jenkins" (default $jenkinsAccess.serviceAccountName $jenkinsSa.name) | quote }}
             - name: HORIZON_UI_TEST_ISOLATED
               value: {{ default false $runner.uiTestIsolated | quote }}
             - name: HORIZON_UI_TEST_IMAGE
