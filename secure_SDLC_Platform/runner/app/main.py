@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import json
 import os
 import re
@@ -70,6 +71,10 @@ class RunnerConfig:
     namespace = os.getenv("HORIZON_RUNNER_NAMESPACE", os.getenv("POD_NAMESPACE", "default"))
     ui_test_isolated = os.getenv("HORIZON_UI_TEST_ISOLATED", "false").lower() == "true"
     ui_test_image = os.getenv("HORIZON_UI_TEST_IMAGE", "mcr.microsoft.com/playwright:v1.44.1-jammy")
+    findings_upload_url = os.getenv("HORIZON_FINDINGS_UPLOAD_URL", "http://horizon-backend:8000/upload_vulnerabilities")
+    findings_upload_token = os.getenv("HORIZON_FINDINGS_UPLOAD_TOKEN", "")
+    security_fail_on_severity = os.getenv("HORIZON_SECURITY_FAIL_ON_SEVERITY", "CRITICAL,HIGH")
+    security_fail_on_dashboard_upload = os.getenv("HORIZON_SECURITY_FAIL_ON_DASHBOARD_UPLOAD", "false").lower() == "true"
 
 
 config = RunnerConfig()
@@ -392,6 +397,7 @@ def report_artifacts(report_dir: Path, context: Dict[str, Any]) -> Dict[str, Any
         ("screenshot", "**/*.png"),
         ("video", "**/*.webm"),
         ("trace", "**/*.zip"),
+        ("sarif", "**/*.sarif"),
     ]
     seen = set()
     for artifact_type, pattern in typed_patterns:
@@ -520,6 +526,48 @@ def print_quality_summary(summary: Dict[str, Any]) -> None:
     print("== Horizon validation evidence ==", flush=True)
     print(f"Tool: {summary.get('toolName') or summary.get('tool')}", flush=True)
     print(f"Status: {summary.get('status')}", flush=True)
+    if summary.get("kind") == "security":
+        counts = summary.get("severityCounts") or {}
+        upload = summary.get("dashboardUpload") or {}
+        print(
+            "Findings: total={total} blocking={blocking} critical={critical} high={high} medium={medium} low={low} unknown={unknown}".format(
+                total=summary.get("findingCount", 0),
+                blocking=summary.get("blockingFindingCount", 0),
+                critical=counts.get("CRITICAL", 0),
+                high=counts.get("HIGH", 0),
+                medium=counts.get("MEDIUM", 0),
+                low=counts.get("LOW", 0),
+                unknown=counts.get("UNKNOWN", 0),
+            ),
+            flush=True,
+        )
+        if summary.get("tools"):
+            print(f"Tools: {', '.join(summary['tools'])}", flush=True)
+        print(
+            "Dashboard upload: {status} endpoint={endpoint} uploaded={uploaded}".format(
+                status=upload.get("status", "NOT_CONFIGURED"),
+                endpoint=upload.get("endpoint", ""),
+                uploaded=upload.get("uploadedCount", 0),
+            ),
+            flush=True,
+        )
+        for failure in summary.get("thresholdFailures") or []:
+            print(f"Threshold: {failure}", flush=True)
+        for finding in (summary.get("sampleFindings") or [])[:10]:
+            print(
+                " - [{severity}] {category} {target} {rule}: {title}".format(
+                    severity=finding.get("severity", "UNKNOWN"),
+                    category=finding.get("source", finding.get("category", "Security")),
+                    target=finding.get("target", ""),
+                    rule=finding.get("vulnerability_id") or finding.get("rule") or finding.get("ruleId") or "",
+                    title=finding.get("description", "")[:180],
+                ),
+                flush=True,
+            )
+        artifacts = summary.get("artifacts", {}).get("counts", {})
+        if artifacts:
+            print(f"Artifacts: {artifacts}", flush=True)
+        return
     if summary.get("targetAppUrl"):
         print(f"Target: {summary['targetAppUrl']}", flush=True)
     if summary.get("baseUrl"):
@@ -1463,6 +1511,401 @@ def execute_quality_code(action: Dict[str, Any], context: Dict[str, Any]) -> Non
         raise HTTPException(status_code=500, detail="Code quality scan failed")
 
 
+SEVERITY_RANK = {"UNKNOWN": 0, "LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
+
+
+def normalize_security_severity(value: Any) -> str:
+    severity = str(value or "UNKNOWN").strip().upper()
+    aliases = {"ERROR": "HIGH", "WARNING": "MEDIUM", "WARN": "MEDIUM", "INFO": "LOW", "INFORMATIONAL": "LOW"}
+    return aliases.get(severity, severity if severity in SEVERITY_RANK else "UNKNOWN")
+
+
+def security_thresholds(action: Dict[str, Any]) -> List[str]:
+    configured = action.get("failOnSeverity") or config.security_fail_on_severity
+    return [normalize_security_severity(item) for item in csv_values(configured) if normalize_security_severity(item) in SEVERITY_RANK]
+
+
+def security_risk_score(severity: str) -> int:
+    return {"CRITICAL": 95, "HIGH": 80, "MEDIUM": 55, "LOW": 25}.get(normalize_security_severity(severity), 10)
+
+
+def security_finding_id(*parts: Any) -> str:
+    raw = "|".join(str(part or "") for part in parts)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
+
+
+def context_application(context: Dict[str, Any]) -> str:
+    payload = context.get("requestPayload") or {}
+    return str(
+        payload.get("PROJECT_NAME")
+        or payload.get("projectName")
+        or context.get("project", {}).get("name")
+        or context.get("runner", {}).get("jobName")
+        or context["requestId"]
+    )
+
+
+def context_requested_by(context: Dict[str, Any]) -> str:
+    payload = context.get("requestPayload") or {}
+    return str(payload.get("REQUESTED_BY") or payload.get("requestedBy") or payload.get("requesterEmail") or "")
+
+
+def make_security_finding(
+    *,
+    category: str,
+    target: str,
+    severity: Any,
+    rule: str,
+    description: str,
+    component: str = "",
+    installed_version: str = "",
+    fixed_version: str = "",
+    line: Optional[int] = None,
+    status: str = "OPEN",
+    reference: str = "",
+    extra: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    normalized = normalize_security_severity(severity)
+    finding = {
+        "target": target or "source",
+        "package_name": component or target or "source",
+        "installed_version": installed_version or "",
+        "vulnerability_id": rule or security_finding_id(category, target, description),
+        "severity": normalized,
+        "fixed_version": fixed_version or "",
+        "risk_score": security_risk_score(normalized),
+        "description": description or rule or category,
+        "source": category,
+        "timestamp": utc_now().isoformat(),
+        "line": line,
+        "rule": rule or "",
+        "status": status,
+        "predictedSeverity": normalized,
+        "reference": reference or "",
+    }
+    if extra:
+        finding.update({key: value for key, value in extra.items() if value not in (None, "")})
+    return finding
+
+
+def count_by_severity(findings: List[Dict[str, Any]]) -> Dict[str, int]:
+    counts = {key: 0 for key in ("CRITICAL", "HIGH", "MEDIUM", "LOW", "UNKNOWN")}
+    for finding in findings:
+        counts[normalize_security_severity(finding.get("severity"))] += 1
+    return counts
+
+
+def blocking_findings(findings: List[Dict[str, Any]], thresholds: List[str]) -> List[Dict[str, Any]]:
+    if not thresholds:
+        return []
+    minimum = min(SEVERITY_RANK[item] for item in thresholds)
+    return [finding for finding in findings if SEVERITY_RANK[normalize_security_severity(finding.get("severity"))] >= minimum]
+
+
+def write_command_audit(path: Path, command: List[str], result: subprocess.CompletedProcess) -> None:
+    path.write_text(
+        "\n".join(
+            [
+                f"command={shlex.join(command)}",
+                f"exitCode={result.returncode}",
+                "stdout:",
+                result.stdout or "",
+                "stderr:",
+                result.stderr or "",
+            ]
+        )
+    )
+
+
+def upload_security_findings(findings: List[Dict[str, Any]], context: Dict[str, Any]) -> Dict[str, Any]:
+    endpoint = config.findings_upload_url.strip()
+    if not endpoint:
+        return {"status": "NOT_CONFIGURED", "uploadedCount": 0}
+    payload = context.get("requestPayload") or {}
+    try:
+        build_number = int(str(context.get("runner", {}).get("buildNumber") or payload.get("BUILD_NUMBER") or 0) or 0)
+    except ValueError:
+        build_number = 0
+    body = {
+        "application": context_application(context),
+        "requestedBy": context_requested_by(context),
+        "repo_url": context.get("git", {}).get("repoUrl") or payload.get("GIT_REPO_URL") or payload.get("repositoryUrl") or "",
+        "jenkins_url": context.get("runner", {}).get("buildUrl") or payload.get("BUILD_URL") or "",
+        "jenkins_job": context.get("runner", {}).get("jobName") or payload.get("JOB_NAME") or "",
+        "build_number": build_number,
+        "vulnerabilities": findings,
+    }
+    headers = {"Content-Type": "application/json"}
+    if config.findings_upload_token:
+        headers["Authorization"] = f"Bearer {config.findings_upload_token}"
+    try:
+        response = requests.post(endpoint, json=body, headers=headers, timeout=30)
+    except requests.RequestException as exc:
+        return {"status": "FAILED", "endpoint": endpoint, "error": str(exc), "uploadedCount": 0}
+    status = "UPLOADED" if response.ok else "FAILED"
+    return {"status": status, "endpoint": endpoint, "httpStatus": response.status_code, "uploadedCount": len(findings), "response": response.text[:1000]}
+
+
+def finalize_security_report(
+    *,
+    action: Dict[str, Any],
+    context: Dict[str, Any],
+    report_dir: Path,
+    stage: str,
+    tool_names: List[str],
+    findings: List[Dict[str, Any]],
+    extra: Optional[Dict[str, Any]] = None,
+) -> None:
+    thresholds = security_thresholds(action)
+    blockers = blocking_findings(findings, thresholds)
+    upload = upload_security_findings(findings, context)
+    write_json(report_dir / "findings.json", findings)
+    write_json(report_dir / "evidence.json", {
+        "stage": stage,
+        "application": context_application(context),
+        "generatedAt": utc_now().isoformat(),
+        "tools": tool_names,
+        "thresholds": thresholds,
+        "findingCount": len(findings),
+        "dashboardUpload": upload,
+    })
+    summary = {
+        "kind": "security",
+        "stage": stage,
+        "status": "FAILED" if blockers else ("COMPLETED_WITH_FINDINGS" if findings else "PASSED"),
+        "tool": ",".join(tool_names),
+        "toolName": ",".join(tool_names),
+        "tools": tool_names,
+        "findingCount": len(findings),
+        "blockingFindingCount": len(blockers),
+        "severityCounts": count_by_severity(findings),
+        "thresholds": thresholds,
+        "thresholdFailures": [f"{item.get('severity')} {item.get('source')} {item.get('target')} {item.get('vulnerability_id')}" for item in blockers[:25]],
+        "sampleFindings": findings[:10],
+        "dashboardUpload": upload,
+        "artifacts": report_artifacts(report_dir, context),
+    }
+    if extra:
+        summary.update(extra)
+    write_json(report_dir / "summary.json", summary)
+    print_quality_summary(summary)
+    if upload.get("status") == "FAILED" and config.security_fail_on_dashboard_upload:
+        raise HTTPException(status_code=500, detail=f"Security findings dashboard upload failed: {upload.get('error') or upload.get('response')}")
+    if blockers and as_bool(action.get("failOnFindings"), True):
+        raise HTTPException(status_code=500, detail=f"{stage} found {len(blockers)} blocking findings at threshold {','.join(thresholds)}")
+
+
+def parse_trivy_report(path: Path, default_category: str = "Dependency Vulnerability") -> List[Dict[str, Any]]:
+    findings: List[Dict[str, Any]] = []
+    if not path.exists():
+        return findings
+    try:
+        doc = json.loads(path.read_text())
+    except json.JSONDecodeError:
+        return findings
+    for result in doc.get("Results", []) or []:
+        target = result.get("Target") or path.name
+        result_class = str(result.get("Class") or "")
+        result_type = str(result.get("Type") or "")
+        category = "Container Vulnerability" if "os-pkgs" in result_type or "image" in path.name else default_category
+        for vuln in result.get("Vulnerabilities") or []:
+            findings.append(make_security_finding(
+                category=category,
+                target=target,
+                severity=vuln.get("Severity"),
+                rule=vuln.get("VulnerabilityID") or vuln.get("PkgID") or "",
+                component=vuln.get("PkgName") or "",
+                installed_version=vuln.get("InstalledVersion") or "",
+                fixed_version=vuln.get("FixedVersion") or "",
+                description=vuln.get("Title") or vuln.get("Description") or "",
+                reference=(vuln.get("PrimaryURL") or ""),
+                extra={"scanner": "trivy"},
+            ))
+        for misconfig in result.get("Misconfigurations") or []:
+            findings.append(make_security_finding(
+                category="IaC Misconfiguration",
+                target=target,
+                severity=misconfig.get("Severity"),
+                rule=misconfig.get("ID") or misconfig.get("AVDID") or "",
+                description=misconfig.get("Title") or misconfig.get("Description") or "",
+                reference=misconfig.get("PrimaryURL") or "",
+                extra={"scanner": "trivy", "resultClass": result_class},
+            ))
+        for secret in result.get("Secrets") or []:
+            findings.append(make_security_finding(
+                category="Secret Exposure",
+                target=target,
+                severity=secret.get("Severity") or "HIGH",
+                rule=secret.get("RuleID") or secret.get("Category") or "secret",
+                description=secret.get("Title") or "Potential secret exposure",
+                line=secret.get("StartLine"),
+                extra={"scanner": "trivy"},
+            ))
+    return findings
+
+
+def semgrep_default_rules(path: Path) -> None:
+    path.write_text(
+        """
+rules:
+  - id: horizon.javascript.eval
+    message: Avoid dynamic eval-style execution.
+    severity: ERROR
+    languages: [javascript, typescript]
+    pattern-either:
+      - pattern: eval(...)
+      - pattern: new Function(...)
+  - id: horizon.insecure.http-url
+    message: Plain HTTP endpoint detected.
+    severity: WARNING
+    languages: [generic]
+    pattern-regex: "http://[^\\s'\\\"]+"
+  - id: horizon.hardcoded.secret
+    message: Potential hardcoded secret detected.
+    severity: ERROR
+    languages: [generic]
+    pattern-regex: "(?i)(password|passwd|secret|token|api[_-]?key|client_secret)\\s*[:=]\\s*['\\\"][^'\\\"]{8,}"
+""".strip()
+    )
+
+
+def parse_semgrep_report(path: Path) -> List[Dict[str, Any]]:
+    findings: List[Dict[str, Any]] = []
+    if not path.exists():
+        return findings
+    try:
+        doc = json.loads(path.read_text())
+    except json.JSONDecodeError:
+        return findings
+    for result in doc.get("results") or []:
+        extra = result.get("extra") or {}
+        findings.append(make_security_finding(
+            category="Static Code Security Finding",
+            target=result.get("path") or "source",
+            severity=extra.get("severity"),
+            rule=result.get("check_id") or "",
+            description=extra.get("message") or result.get("check_id") or "Static code finding",
+            line=(result.get("start") or {}).get("line"),
+            extra={"scanner": "semgrep"},
+        ))
+    return findings
+
+
+def parse_gitleaks_report(path: Path) -> List[Dict[str, Any]]:
+    findings: List[Dict[str, Any]] = []
+    if not path.exists():
+        return findings
+    try:
+        doc = json.loads(path.read_text() or "[]")
+    except json.JSONDecodeError:
+        return findings
+    for item in doc if isinstance(doc, list) else []:
+        findings.append(make_security_finding(
+            category="Secret Exposure",
+            target=item.get("File") or "source",
+            severity="HIGH",
+            rule=item.get("RuleID") or item.get("Description") or "secret",
+            description=item.get("Description") or "Secret detected by Gitleaks",
+            line=item.get("StartLine"),
+            extra={"scanner": "gitleaks", "commit": item.get("Commit")},
+        ))
+    return findings
+
+
+def discover_manifest_inputs(source_dir: Path) -> List[Path]:
+    candidates: List[Path] = []
+    for name in ("k8s", "kubernetes", "manifests", "deploy", "deployment", "helm", "charts"):
+        path = source_dir / name
+        if path.exists():
+            candidates.append(path)
+    for path in list(source_dir.glob("*.yaml")) + list(source_dir.glob("*.yml")):
+        candidates.append(path)
+    return candidates
+
+
+def built_in_conftest_policy(policy_dir: Path) -> Path:
+    policy_dir.mkdir(parents=True, exist_ok=True)
+    path = policy_dir / "horizon-kubernetes.rego"
+    path.write_text(
+        r'''
+package main
+
+deny[msg] {
+  input.kind == "Pod"
+  container := input.spec.containers[_]
+  container.securityContext.privileged == true
+  msg := sprintf("privileged container %s is not allowed", [container.name])
+}
+
+deny[msg] {
+  input.kind == "Pod"
+  input.spec.hostNetwork == true
+  msg := "hostNetwork is not allowed"
+}
+
+deny[msg] {
+  input.kind == "Pod"
+  container := input.spec.containers[_]
+  not container.securityContext.runAsNonRoot
+  msg := sprintf("container %s should set securityContext.runAsNonRoot=true", [container.name])
+}
+
+deny[msg] {
+  input.kind == "Pod"
+  container := input.spec.containers[_]
+  not container.resources.limits.cpu
+  msg := sprintf("container %s is missing CPU limit", [container.name])
+}
+
+deny[msg] {
+  input.kind == "Pod"
+  container := input.spec.containers[_]
+  not container.resources.limits.memory
+  msg := sprintf("container %s is missing memory limit", [container.name])
+}
+
+warn[msg] {
+  input.kind == "Pod"
+  container := input.spec.containers[_]
+  endswith(container.image, ":latest")
+  msg := sprintf("container %s uses latest image tag", [container.name])
+}
+'''.strip()
+    )
+    return path
+
+
+def parse_conftest_report(path: Path) -> List[Dict[str, Any]]:
+    findings: List[Dict[str, Any]] = []
+    if not path.exists():
+        return findings
+    try:
+        doc = json.loads(path.read_text() or "[]")
+    except json.JSONDecodeError:
+        return findings
+    for result in doc if isinstance(doc, list) else []:
+        target = result.get("filename") or result.get("namespace") or "manifest"
+        for failure in result.get("failures") or []:
+            findings.append(make_security_finding(
+                category="Policy Violation",
+                target=target,
+                severity="HIGH",
+                rule="conftest-deny",
+                description=str(failure.get("msg") if isinstance(failure, dict) else failure),
+                extra={"scanner": "conftest"},
+            ))
+        for warning in result.get("warnings") or []:
+            findings.append(make_security_finding(
+                category="Policy Violation",
+                target=target,
+                severity="MEDIUM",
+                rule="conftest-warn",
+                description=str(warning.get("msg") if isinstance(warning, dict) else warning),
+                extra={"scanner": "conftest"},
+            ))
+    return findings
+
+
 def execute_security_preflight(action: Dict[str, Any], context: Dict[str, Any]) -> None:
     source_dir = get_source_dir(context)
     report_dir = action_report_dir(action, context, "security-preflight")
@@ -1553,73 +1996,206 @@ def execute_security_preflight(action: Dict[str, Any], context: Dict[str, Any]) 
 def execute_security_static_code(action: Dict[str, Any], context: Dict[str, Any]) -> None:
     source_dir = get_source_dir(context)
     report_dir = action_report_dir(action, context, "static-security")
-    patterns = [
-        ("hardcoded_secret", re.compile(r"(?i)(password|secret|token|apikey|api_key)\s*[:=]\s*['\"][^'\"]{8,}")),
-        ("dangerous_eval", re.compile(r"\beval\s*\(")),
-        ("insecure_http", re.compile(r"(?i)['\"]http://")),
-        ("shell_exec", re.compile(r"(?i)(exec|spawn|Runtime\.getRuntime\(\)\.exec)")),
-    ]
-    findings = []
-    for path in source_dir.rglob("*"):
-        if not path.is_file() or any(part in {".git", "node_modules", "target", "dist", "build"} for part in path.parts):
-            continue
-        try:
-            text = path.read_text(errors="ignore")
-        except OSError:
-            continue
-        for idx, line in enumerate(text.splitlines(), start=1):
-            for rule_id, pattern in patterns:
-                if pattern.search(line):
-                    findings.append({
-                        "ruleId": rule_id,
-                        "file": str(path.relative_to(source_dir)),
-                        "line": idx,
-                        "severity": "HIGH" if rule_id in {"hardcoded_secret", "dangerous_eval"} else "MEDIUM",
-                    })
-    write_json(report_dir / "findings.json", findings)
-    write_json(report_dir / "summary.json", {"status": "PASSED", "findingCount": len(findings), "reviewTeam": action.get("reviewTeam") or ""})
+    findings: List[Dict[str, Any]] = []
+    tools: List[str] = []
+
+    if shutil.which("semgrep"):
+        rules_path = report_dir / "horizon-semgrep-rules.yml"
+        semgrep_default_rules(rules_path)
+        config_args = ["--config", str(rules_path)]
+        for repo_rules in (".semgrep.yml", ".semgrep.yaml"):
+            if (source_dir / repo_rules).exists():
+                config_args.extend(["--config", repo_rules])
+        semgrep_json = report_dir / "semgrep.json"
+        semgrep_cmd = ["semgrep", "scan", *config_args, "--json", "--output", str(semgrep_json), "--metrics=off", "."]
+        semgrep = run_command(semgrep_cmd, cwd=source_dir, check=False)
+        write_command_audit(report_dir / "semgrep-command.txt", semgrep_cmd, semgrep)
+        semgrep_sarif = report_dir / "semgrep.sarif"
+        semgrep_sarif_cmd = ["semgrep", "scan", *config_args, "--sarif", "--output", str(semgrep_sarif), "--metrics=off", "."]
+        run_command(semgrep_sarif_cmd, cwd=source_dir, check=False)
+        findings.extend(parse_semgrep_report(semgrep_json))
+        tools.append("semgrep")
+
+    if shutil.which("gitleaks"):
+        gitleaks_json = report_dir / "gitleaks.json"
+        gitleaks_cmd = [
+            "gitleaks", "detect",
+            "--source", ".",
+            "--no-git",
+            "--redact",
+            "--report-format", "json",
+            "--report-path", str(gitleaks_json),
+        ]
+        gitleaks = run_command(gitleaks_cmd, cwd=source_dir, check=False)
+        write_command_audit(report_dir / "gitleaks-command.txt", gitleaks_cmd, gitleaks)
+        gitleaks_sarif = report_dir / "gitleaks.sarif"
+        gitleaks_sarif_cmd = [
+            "gitleaks", "detect",
+            "--source", ".",
+            "--no-git",
+            "--redact",
+            "--report-format", "sarif",
+            "--report-path", str(gitleaks_sarif),
+        ]
+        run_command(gitleaks_sarif_cmd, cwd=source_dir, check=False)
+        findings.extend(parse_gitleaks_report(gitleaks_json))
+        tools.append("gitleaks")
+
+    if not tools:
+        findings.append(make_security_finding(
+            category="Static Code Security Finding",
+            target="runner",
+            severity="MEDIUM",
+            rule="scanner-not-configured",
+            description="No static security scanner is installed in the runner image.",
+        ))
+
+    finalize_security_report(
+        action=action,
+        context=context,
+        report_dir=report_dir,
+        stage="static-security",
+        tool_names=tools or ["local-static-security"],
+        findings=findings,
+        extra={"reviewTeam": action.get("reviewTeam") or ""},
+    )
 
 
 def execute_security_container_iac(action: Dict[str, Any], context: Dict[str, Any]) -> None:
     source_dir = get_source_dir(context)
     report_dir = action_report_dir(action, context, "container-iac")
-    image_uri = render_value(action.get("imageUri") or "", context)
+    payload = context.get("requestPayload") or {}
+    image_uri = render_value(action.get("imageUri") or payload.get("IMAGE_URI") or payload.get("imageUri") or "{{image.uriWithDigest}}", context)
     region = action.get("awsRegion") or os.getenv("AWS_REGION", "us-east-1")
     role_env = assume_role_env(action.get("roleArn", ""), region, f"horizon-scan-{context['requestId']}")
-    results = {"filesystem": "NOT_RUN", "image": "NOT_RUN", "status": "PASSED"}
+    findings: List[Dict[str, Any]] = []
+    tools: List[str] = []
+    scan_status: Dict[str, Any] = {"filesystem": "NOT_RUN", "image": "NOT_RUN"}
     if shutil.which("trivy"):
         fs_json = report_dir / "filesystem-security.json"
-        fs = run_command(["trivy", "fs", "--format", "json", "--scanners", "vuln,secret,config", "--severity", "CRITICAL,HIGH,MEDIUM", "--output", str(fs_json), "."], cwd=source_dir, check=False)
-        results["filesystem"] = "PASSED" if fs.returncode == 0 else "FINDINGS"
+        fs_cmd = [
+            "trivy", "fs",
+            "--format", "json",
+            "--scanners", "vuln,secret,config",
+            "--severity", "CRITICAL,HIGH,MEDIUM,LOW,UNKNOWN",
+            "--output", str(fs_json),
+            ".",
+        ]
+        fs = run_command(fs_cmd, cwd=source_dir, check=False)
+        write_command_audit(report_dir / "trivy-filesystem-command.txt", fs_cmd, fs)
+        fs_sarif = report_dir / "filesystem-security.sarif"
+        run_command(["trivy", "fs", "--format", "sarif", "--scanners", "vuln,secret,config", "--output", str(fs_sarif), "."], cwd=source_dir, check=False)
+        fs_table = report_dir / "filesystem-security.txt"
+        table = run_command(["trivy", "fs", "--format", "table", "--scanners", "vuln,secret,config", "."], cwd=source_dir, check=False)
+        fs_table.write_text((table.stdout or "") + "\n" + (table.stderr or ""))
+        findings.extend(parse_trivy_report(fs_json, default_category="Dependency Vulnerability"))
+        scan_status["filesystem"] = "COMPLETED" if fs.returncode in {0, 1} else "ERROR"
+        tools.append("trivy-fs")
         if image_uri:
             image_json = report_dir / "image-security.json"
-            image = run_command(["trivy", "image", "--format", "json", "--severity", "CRITICAL,HIGH,MEDIUM", "--output", str(image_json), image_uri], env=role_env, check=False)
-            results["image"] = "PASSED" if image.returncode == 0 else "FINDINGS"
+            image_cmd = ["trivy", "image", "--format", "json", "--severity", "CRITICAL,HIGH,MEDIUM,LOW,UNKNOWN", "--output", str(image_json), image_uri]
+            image = run_command(image_cmd, env=role_env, check=False)
+            write_command_audit(report_dir / "trivy-image-command.txt", image_cmd, image)
+            image_sarif = report_dir / "image-security.sarif"
+            run_command(["trivy", "image", "--format", "sarif", "--output", str(image_sarif), image_uri], env=role_env, check=False)
+            image_table = report_dir / "image-security.txt"
+            image_text = run_command(["trivy", "image", "--format", "table", image_uri], env=role_env, check=False)
+            image_table.write_text((image_text.stdout or "") + "\n" + (image_text.stderr or ""))
+            findings.extend(parse_trivy_report(image_json, default_category="Container Vulnerability"))
+            scan_status["image"] = "COMPLETED" if image.returncode in {0, 1} else "ERROR"
+            tools.append("trivy-image")
     else:
-        results["status"] = "COMPLETED_WITHOUT_EXTERNAL_SCANNER"
-    write_json(report_dir / "summary.json", results)
+        findings.append(make_security_finding(
+            category="Container Vulnerability",
+            target="runner",
+            severity="MEDIUM",
+            rule="trivy-not-configured",
+            description="Trivy is not installed in the runner image.",
+        ))
+
+    finalize_security_report(
+        action=action,
+        context=context,
+        report_dir=report_dir,
+        stage="container-iac",
+        tool_names=tools or ["local-container-iac"],
+        findings=findings,
+        extra={"scanStatus": scan_status, "imageUri": image_uri},
+    )
 
 
 def execute_security_policy(action: Dict[str, Any], context: Dict[str, Any]) -> None:
     source_dir = get_source_dir(context)
     report_dir = action_report_dir(action, context, "policy")
-    findings = []
-    for path in list(source_dir.rglob("*.yaml")) + list(source_dir.rglob("*.yml")):
-        if any(part in {".git", "node_modules", "target", "dist", "build"} for part in path.parts):
-            continue
-        text = path.read_text(errors="ignore")
-        if "privileged: true" in text:
-            findings.append({"ruleId": "no-privileged-workloads", "file": str(path.relative_to(source_dir)), "severity": "HIGH"})
-        if "hostNetwork: true" in text:
-            findings.append({"ruleId": "no-host-network", "file": str(path.relative_to(source_dir)), "severity": "HIGH"})
-        if re.search(r"image:\s+[^:\s]+(?:\s|$)", text):
-            findings.append({"ruleId": "image-tag-required", "file": str(path.relative_to(source_dir)), "severity": "MEDIUM"})
+    findings: List[Dict[str, Any]] = []
+    tools: List[str] = []
+    manifest_inputs = discover_manifest_inputs(source_dir)
+    rendered_dir = report_dir / "rendered"
+    rendered_dir.mkdir(parents=True, exist_ok=True)
+    conftest_inputs: List[Path] = []
+
+    for item in manifest_inputs:
+        if item.is_dir() and (item / "Chart.yaml").exists() and shutil.which("helm"):
+            rendered = rendered_dir / f"{safe_file_token(item.name)}.yaml"
+            helm_cmd = ["helm", "template", safe_k8s_name(context_application(context)), str(item)]
+            helm = run_command(helm_cmd, cwd=source_dir, check=False)
+            write_command_audit(report_dir / f"helm-template-{safe_file_token(item.name)}.txt", helm_cmd, helm)
+            if helm.stdout:
+                rendered.write_text(helm.stdout)
+                conftest_inputs.append(rendered)
+        elif item.is_dir() and (item / "kustomization.yaml").exists() and shutil.which("kubectl"):
+            rendered = rendered_dir / f"{safe_file_token(item.name)}-kustomize.yaml"
+            kustomize_cmd = ["kubectl", "kustomize", str(item)]
+            kustomize = run_command(kustomize_cmd, cwd=source_dir, check=False)
+            write_command_audit(report_dir / f"kustomize-{safe_file_token(item.name)}.txt", kustomize_cmd, kustomize)
+            if kustomize.stdout:
+                rendered.write_text(kustomize.stdout)
+                conftest_inputs.append(rendered)
+        else:
+            conftest_inputs.append(item)
+
+    policy_dirs = [report_dir / "policies"]
+    built_in_conftest_policy(policy_dirs[0])
+    for name in ("policy", "policies", ".horizon/policy", ".horizon/policies"):
+        path = source_dir / name
+        if path.exists():
+            policy_dirs.append(path)
+
+    if shutil.which("conftest") and conftest_inputs:
+        conftest_json = report_dir / "conftest.json"
+        conftest_cmd = ["conftest", "test", "--output", "json"]
+        for policy_dir in policy_dirs:
+            conftest_cmd.extend(["--policy", str(policy_dir)])
+        conftest_cmd.extend(str(item) for item in conftest_inputs)
+        conftest = run_command(conftest_cmd, cwd=source_dir, check=False)
+        write_command_audit(report_dir / "conftest-command.txt", conftest_cmd, conftest)
+        conftest_json.write_text(conftest.stdout or "[]")
+        findings.extend(parse_conftest_report(conftest_json))
+        tools.append("conftest")
+
+    write_json(report_dir / "manifest-inputs.json", [relative_path(path, source_dir) for path in conftest_inputs])
+
     if (source_dir / "Dockerfile").exists():
         dockerfile = (source_dir / "Dockerfile").read_text(errors="ignore")
         if re.search(r"(?im)^USER\s+root\s*$", dockerfile) or not re.search(r"(?im)^USER\s+\S+", dockerfile):
-            findings.append({"ruleId": "container-non-root-user", "file": "Dockerfile", "severity": "MEDIUM"})
-    write_json(report_dir / "findings.json", findings)
-    write_json(report_dir / "summary.json", {"status": "PASSED", "findingCount": len(findings)})
+            findings.append(make_security_finding(
+                category="Policy Violation",
+                target="Dockerfile",
+                severity="MEDIUM",
+                rule="container-non-root-user",
+                description="Dockerfile should run as a non-root user for enterprise workloads.",
+                extra={"scanner": "horizon-policy"},
+            ))
+
+    finalize_security_report(
+        action=action,
+        context=context,
+        report_dir=report_dir,
+        stage="policy-validation",
+        tool_names=tools or ["horizon-policy"],
+        findings=findings,
+        extra={"manifestInputCount": len(conftest_inputs), "policyCount": len(policy_dirs)},
+    )
 
 
 def execute_release_load_metadata(action: Dict[str, Any], context: Dict[str, Any]) -> None:

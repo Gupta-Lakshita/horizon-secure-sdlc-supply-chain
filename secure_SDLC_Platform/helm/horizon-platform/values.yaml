@@ -236,6 +236,12 @@ components:
     uiTestImage: mcr.microsoft.com/playwright:v1.44.1-jammy
     publicKeySecretName: horizon-license-public-key
     publicKeySecretKey: publicKeyPem
+    findingsUploadUrl: http://horizon-backend:8000/upload_vulnerabilities
+    findingsUploadTokenSecretName: ""
+    findingsUploadTokenSecretKey: token
+    findingsUploadTokenSecretOptional: true
+    securityFailOnSeverity: CRITICAL,HIGH
+    securityFailOnDashboardUpload: false
   sonarqube:
     enabled: true
     image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/sonarqube:10.4-community

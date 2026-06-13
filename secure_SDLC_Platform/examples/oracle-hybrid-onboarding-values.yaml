@@ -183,7 +183,7 @@ components:
       source: runner
   runner:
     enabled: true
-    image: "426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/runner:0.1.5"
+    image: "426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/runner:0.1.14"
     executeActions: true
     kanikoImage: gcr.io/kaniko-project/executor:v1.23.2
     keepBuildJobs: false

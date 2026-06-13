@@ -498,6 +498,20 @@ spec:
               value: {{ default false $runner.uiTestIsolated | quote }}
             - name: HORIZON_UI_TEST_IMAGE
               value: {{ default "mcr.microsoft.com/playwright:v1.44.1-jammy" $runner.uiTestImage | quote }}
+            - name: HORIZON_FINDINGS_UPLOAD_URL
+              value: {{ default "http://horizon-backend:8000/upload_vulnerabilities" $runner.findingsUploadUrl | quote }}
+            {{- if $runner.findingsUploadTokenSecretName }}
+            - name: HORIZON_FINDINGS_UPLOAD_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $runner.findingsUploadTokenSecretName | quote }}
+                  key: {{ default "token" $runner.findingsUploadTokenSecretKey | quote }}
+                  optional: {{ default true $runner.findingsUploadTokenSecretOptional }}
+            {{- end }}
+            - name: HORIZON_SECURITY_FAIL_ON_SEVERITY
+              value: {{ default "CRITICAL,HIGH" $runner.securityFailOnSeverity | quote }}
+            - name: HORIZON_SECURITY_FAIL_ON_DASHBOARD_UPLOAD
+              value: {{ default false $runner.securityFailOnDashboardUpload | quote }}
             - name: HORIZON_PUBLIC_KEY_PATH
               value: /etc/horizon/license/publicKeyPem
           volumeMounts:
