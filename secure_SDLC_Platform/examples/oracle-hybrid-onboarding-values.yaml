@@ -164,7 +164,7 @@ environmentCatalog:
 components:
   frontend:
     enabled: true
-    image: "426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/frontend:1.4.27"
+    image: "426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/frontend:1.4.28"
   backend:
     enabled: true
     image: "426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.51"
