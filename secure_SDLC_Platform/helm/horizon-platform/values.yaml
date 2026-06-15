@@ -19,12 +19,6 @@ domain:
   keycloakHost: keycloak.example.com
   sonarqubeHost: sonar.example.com
 
-catalogSync:
-  tokenSecretName: ""
-  tokenSecretKey: token
-  tlsVerify: true
-  caBundlePath: ""
-
 # Bootstrap AWS details are retained for Terraform/preflight compatibility.
 # Runtime pipeline forms should not ask developers for these values; developers select
 # a target environment and the backend resolves details from environmentCatalog.
@@ -214,13 +208,10 @@ components:
     enabled: true
     image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/jenkins:1.0.8
     securityEnabled: true
-    securityRealm: private # private | ldap
     executionMode: runner
     credentialsSecretName: horizon-jenkins-credentials
     adminUser: horizon-admin
     serviceUser: horizon-backend
-    ldap:
-      userSearch: "uid={0}"
     runner:
       url: http://horizon-runner:8080
       cliPath: /usr/local/bin/horizon-runner
@@ -238,12 +229,6 @@ components:
     keepBuildJobs: false
     executionPlanEndpoint: https://license.horizonrelevance.com/api/v1/execution/plans
     eventEndpoint: https://license.horizonrelevance.com/api/v1/execution/events
-    findingsUploadUrl: http://horizon-backend:8000/upload_vulnerabilities
-    findingsUploadTokenSecretName: ""
-    findingsUploadTokenSecretKey: token
-    findingsUploadTokenSecretOptional: true
-    securityFailOnSeverity: CRITICAL,HIGH
-    securityFailOnDashboardUpload: false
     cacheEnabled: true
     gracePeriodHours: 24
     workDir: /var/lib/horizon-runner
@@ -251,43 +236,15 @@ components:
     uiTestImage: mcr.microsoft.com/playwright:v1.44.1-jammy
     publicKeySecretName: horizon-license-public-key
     publicKeySecretKey: publicKeyPem
-    sonar:
-      hostUrl: http://horizon-sonarqube:9000
-      tokenSecretName: horizon-sonarqube-token
-      tokenSecretKey: token
-      tokenSecretOptional: true
+    findingsUploadUrl: http://horizon-backend:8000/upload_vulnerabilities
+    findingsUploadTokenSecretName: ""
+    findingsUploadTokenSecretKey: token
+    findingsUploadTokenSecretOptional: true
+    securityFailOnSeverity: CRITICAL,HIGH
+    securityFailOnDashboardUpload: false
   sonarqube:
     enabled: true
     image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/sonarqube:10.4-community
-    imagePullPolicy: Always
-    strategyType: Recreate
-    webContext: ""
-    # Enterprise auth options:
-    # - local: SonarQube local users only.
-    # - ldap: chart can generate sonar.properties from auth.ldap values.
-    # - saml: set auth.saml.properties or mount a complete configurationSecretName.
-    # For production, prefer configurationSecretName so bind passwords and IdP material stay out of Git.
-    configurationSecretName: ""
-    configurationSecretKey: sonar.properties
-    auth:
-      provider: local
-      ldap:
-        url: ""
-        bindDn: ""
-        bindPassword: ""
-        authentication: simple
-        userBaseDn: ""
-        userRequest: "(&(objectClass=inetOrgPerson)(uid={login}))"
-        realNameAttribute: cn
-        emailAttribute: mail
-        groupBaseDn: ""
-        groupRequest: "(&(objectClass=groupOfNames)(member={dn}))"
-        groupIdAttribute: cn
-        followReferrals: false
-      saml:
-        properties: {}
-    extraProperties: {}
-    extraEnv: []
   trivy:
     enabled: true
     image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/trivy-scanner:1.1.2

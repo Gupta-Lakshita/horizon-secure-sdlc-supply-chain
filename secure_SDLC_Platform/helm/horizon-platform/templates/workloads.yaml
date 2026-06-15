@@ -5,18 +5,7 @@
 {{- $jenkins := default dict $components.jenkins -}}
 {{- $jenkinsRunner := default dict $jenkins.runner -}}
 {{- $runner := default dict $components.runner -}}
-{{- $runnerSonar := default dict $runner.sonar -}}
 {{- $sonarqube := default dict $components.sonarqube -}}
-{{- $sonarqubeAuth := default dict $sonarqube.auth -}}
-{{- $sonarqubeAuthProvider := lower (default "local" $sonarqubeAuth.provider) -}}
-{{- $sonarqubeLdap := default dict $sonarqubeAuth.ldap -}}
-{{- $sonarqubeSaml := default dict $sonarqubeAuth.saml -}}
-{{- $sonarqubeSamlProperties := default dict $sonarqubeSaml.properties -}}
-{{- $sonarqubeExtraProperties := default dict $sonarqube.extraProperties -}}
-{{- $sonarqubeConfigSecretName := default "" $sonarqube.configurationSecretName -}}
-{{- $sonarqubeConfigSecretKey := default "sonar.properties" $sonarqube.configurationSecretKey -}}
-{{- $sonarqubeGeneratedConfigEnabled := and (not $sonarqubeConfigSecretName) (or (ne $sonarqubeAuthProvider "local") (gt (len $sonarqubeExtraProperties) 0)) -}}
-{{- $sonarqubeConfigEnabled := or $sonarqubeConfigSecretName $sonarqubeGeneratedConfigEnabled -}}
 {{- $platform := default dict $values.platform -}}
 {{- $cluster := default dict $platform.cluster -}}
 {{- $accessModel := default dict $values.accessModel -}}
@@ -26,13 +15,11 @@
 {{- $jenkinsSa := default dict $jenkinsAccess.serviceAccount -}}
 {{- $domain := default dict $values.domain -}}
 {{- $platformHosts := default dict $domain.platformHosts -}}
-{{- $catalogSync := default dict $values.catalogSync -}}
 {{- $license := default dict $values.license -}}
 {{- $identity := default dict $values.identity -}}
 {{- $ldap := default dict $identity.ldap -}}
 {{- $backendSecretName := default "horizon-backend-secrets" $platform.backendSecretName -}}
 {{- $jenkinsCredentialsSecretName := default "horizon-jenkins-credentials" $jenkins.credentialsSecretName -}}
-{{- $jenkinsLdap := default dict $jenkins.ldap -}}
 {{- $jenkinsPath := default "/" $platformHosts.jenkinsPath -}}
 {{- $imagePullSecrets := default (default list $values.imagePullSecrets) $platform.imagePullSecrets -}}
 {{- if default true $frontend.enabled }}
@@ -193,13 +180,6 @@ spec:
                   optional: true
             - name: ENVIRONMENT_CATALOG_FILE
               value: /app/config/environment-catalog.json
-            {{- if $catalogSync.tokenSecretName }}
-            - name: ENVIRONMENT_CATALOG_SYNC_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ $catalogSync.tokenSecretName | quote }}
-                  key: {{ default "token" $catalogSync.tokenSecretKey | quote }}
-            {{- end }}
             - name: LDAP_SERVER
               value: {{ default "ldap://horizon-openldap:389" $ldap.host | quote }}
             - name: LDAP_USER
@@ -370,28 +350,6 @@ spec:
               value: {{ default "/usr/local/bin/horizon-runner" $jenkinsRunner.cliPath | quote }}
             - name: HORIZON_JENKINS_SECURITY_ENABLED
               value: {{ default true $jenkins.securityEnabled | quote }}
-            - name: HORIZON_JENKINS_SECURITY_REALM
-              value: {{ default "private" $jenkins.securityRealm | quote }}
-            - name: JENKINS_LDAP_SERVER
-              value: {{ default "ldap://horizon-openldap:389" $ldap.host | quote }}
-            - name: JENKINS_LDAP_ROOT_DN
-              value: {{ default "dc=horizonrelevance,dc=local" $ldap.baseDn | quote }}
-            - name: JENKINS_LDAP_USER_SEARCH_BASE
-              value: {{ default "ou=users,dc=horizonrelevance,dc=local" $ldap.userBaseDn | quote }}
-            - name: JENKINS_LDAP_USER_SEARCH
-              value: {{ default "uid={0}" $jenkinsLdap.userSearch | quote }}
-            - name: JENKINS_LDAP_GROUP_SEARCH_BASE
-              value: {{ default "ou=groups,dc=horizonrelevance,dc=local" $ldap.groupBaseDn | quote }}
-            - name: JENKINS_LDAP_GROUP_SEARCH_FILTER
-              value: {{ default "(&(objectClass=groupOfNames)(member={user_dn}))" $ldap.groupSearchFilter | quote }}
-            - name: JENKINS_LDAP_MANAGER_DN
-              value: {{ default "cn=admin,dc=horizonrelevance,dc=local" $ldap.bindDn | quote }}
-            - name: JENKINS_LDAP_MANAGER_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ default "horizon-ldap-bind" $ldap.bindSecretName | quote }}
-                  key: {{ default "password" $ldap.bindSecretKey | quote }}
-                  optional: true
             - name: JENKINS_ADMIN_USER
               valueFrom:
                 secretKeyRef:
@@ -526,20 +484,6 @@ spec:
               value: {{ default "" $runner.executionPlanEndpoint | quote }}
             - name: HORIZON_EXECUTION_EVENT_ENDPOINT
               value: {{ default "" $runner.eventEndpoint | quote }}
-            - name: HORIZON_FINDINGS_UPLOAD_URL
-              value: {{ default "http://horizon-backend:8000/upload_vulnerabilities" $runner.findingsUploadUrl | quote }}
-            {{- if $runner.findingsUploadTokenSecretName }}
-            - name: HORIZON_FINDINGS_UPLOAD_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ $runner.findingsUploadTokenSecretName | quote }}
-                  key: {{ default "token" $runner.findingsUploadTokenSecretKey | quote }}
-                  optional: {{ default true $runner.findingsUploadTokenSecretOptional }}
-            {{- end }}
-            - name: HORIZON_SECURITY_FAIL_ON_SEVERITY
-              value: {{ default "CRITICAL,HIGH" $runner.securityFailOnSeverity | quote }}
-            - name: HORIZON_SECURITY_FAIL_ON_DASHBOARD_UPLOAD
-              value: {{ default false $runner.securityFailOnDashboardUpload | quote }}
             - name: HORIZON_RUNNER_CACHE_ENABLED
               value: {{ default true $runner.cacheEnabled | quote }}
             - name: HORIZON_RUNNER_GRACE_PERIOD_HOURS
@@ -554,16 +498,20 @@ spec:
               value: {{ default false $runner.uiTestIsolated | quote }}
             - name: HORIZON_UI_TEST_IMAGE
               value: {{ default "mcr.microsoft.com/playwright:v1.44.1-jammy" $runner.uiTestImage | quote }}
-            - name: SONAR_HOST_URL
-              value: {{ default "http://horizon-sonarqube:9000" $runnerSonar.hostUrl | quote }}
-            {{- if $runnerSonar.tokenSecretName }}
-            - name: SONAR_TOKEN
+            - name: HORIZON_FINDINGS_UPLOAD_URL
+              value: {{ default "http://horizon-backend:8000/upload_vulnerabilities" $runner.findingsUploadUrl | quote }}
+            {{- if $runner.findingsUploadTokenSecretName }}
+            - name: HORIZON_FINDINGS_UPLOAD_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: {{ $runnerSonar.tokenSecretName | quote }}
-                  key: {{ default "token" $runnerSonar.tokenSecretKey | quote }}
-                  optional: {{ default false $runnerSonar.tokenSecretOptional }}
+                  name: {{ $runner.findingsUploadTokenSecretName | quote }}
+                  key: {{ default "token" $runner.findingsUploadTokenSecretKey | quote }}
+                  optional: {{ default true $runner.findingsUploadTokenSecretOptional }}
             {{- end }}
+            - name: HORIZON_SECURITY_FAIL_ON_SEVERITY
+              value: {{ default "CRITICAL,HIGH" $runner.securityFailOnSeverity | quote }}
+            - name: HORIZON_SECURITY_FAIL_ON_DASHBOARD_UPLOAD
+              value: {{ default false $runner.securityFailOnDashboardUpload | quote }}
             - name: HORIZON_PUBLIC_KEY_PATH
               value: /etc/horizon/license/publicKeyPem
           volumeMounts:
@@ -616,49 +564,6 @@ spec:
 ---
 {{- end }}
 {{- if default true $sonarqube.enabled }}
-{{- if $sonarqubeGeneratedConfigEnabled }}
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: horizon-sonarqube-config
-  namespace: {{ .Release.Namespace }}
-  labels:
-    app.kubernetes.io/name: horizon-sonarqube
-    app.kubernetes.io/instance: {{ .Release.Name }}
-    app.kubernetes.io/managed-by: {{ .Release.Service }}
-data:
-  sonar.properties: |
-    sonar.web.context={{ default "" $sonarqube.webContext }}
-    {{- if eq $sonarqubeAuthProvider "ldap" }}
-    sonar.security.realm=LDAP
-    ldap.url={{ required "components.sonarqube.auth.ldap.url is required when SonarQube LDAP auth is enabled" $sonarqubeLdap.url }}
-    {{- if $sonarqubeLdap.bindDn }}
-    ldap.bindDn={{ $sonarqubeLdap.bindDn }}
-    {{- end }}
-    {{- if $sonarqubeLdap.bindPassword }}
-    ldap.bindPassword={{ $sonarqubeLdap.bindPassword }}
-    {{- end }}
-    ldap.authentication={{ default "simple" $sonarqubeLdap.authentication }}
-    ldap.user.baseDn={{ required "components.sonarqube.auth.ldap.userBaseDn is required when SonarQube LDAP auth is enabled" $sonarqubeLdap.userBaseDn }}
-    ldap.user.request={{ default "(&(objectClass=inetOrgPerson)(uid={login}))" $sonarqubeLdap.userRequest }}
-    ldap.user.realNameAttribute={{ default "cn" $sonarqubeLdap.realNameAttribute }}
-    ldap.user.emailAttribute={{ default "mail" $sonarqubeLdap.emailAttribute }}
-    {{- if $sonarqubeLdap.groupBaseDn }}
-    ldap.group.baseDn={{ $sonarqubeLdap.groupBaseDn }}
-    ldap.group.request={{ default "(&(objectClass=groupOfNames)(member={dn}))" $sonarqubeLdap.groupRequest }}
-    ldap.group.idAttribute={{ default "cn" $sonarqubeLdap.groupIdAttribute }}
-    {{- end }}
-    ldap.followReferrals={{ default false $sonarqubeLdap.followReferrals }}
-    {{- else if eq $sonarqubeAuthProvider "saml" }}
-    {{- range $key, $value := $sonarqubeSamlProperties }}
-    {{ $key }}={{ $value }}
-    {{- end }}
-    {{- end }}
-    {{- range $key, $value := $sonarqubeExtraProperties }}
-    {{ $key }}={{ $value }}
-    {{- end }}
----
-{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -670,8 +575,6 @@ metadata:
     app.kubernetes.io/managed-by: {{ .Release.Service }}
 spec:
   replicas: {{ default 1 $sonarqube.replicas }}
-  strategy:
-    type: {{ default "Recreate" $sonarqube.strategyType | quote }}
   selector:
     matchLabels:
       app.kubernetes.io/name: horizon-sonarqube
@@ -702,22 +605,7 @@ spec:
               value: "true"
             - name: SONAR_WEB_CONTEXT
               value: {{ default "" $sonarqube.webContext | quote }}
-            {{- range $env := default list $sonarqube.extraEnv }}
-            - name: {{ required "components.sonarqube.extraEnv[].name is required" $env.name | quote }}
-              {{- if hasKey $env "value" }}
-              value: {{ $env.value | quote }}
-              {{- else if $env.valueFrom }}
-              valueFrom:
-{{ toYaml $env.valueFrom | indent 16 }}
-              {{- end }}
-            {{- end }}
           volumeMounts:
-            {{- if $sonarqubeConfigEnabled }}
-            - name: sonarqube-config
-              mountPath: /opt/sonarqube/conf/sonar.properties
-              subPath: sonar.properties
-              readOnly: true
-            {{- end }}
             - name: sonarqube-data
               mountPath: /opt/sonarqube/data
             - name: sonarqube-temp
@@ -741,22 +629,6 @@ spec:
             periodSeconds: 30
             failureThreshold: 8
       volumes:
-        {{- if $sonarqubeConfigEnabled }}
-        - name: sonarqube-config
-          {{- if $sonarqubeConfigSecretName }}
-          secret:
-            secretName: {{ $sonarqubeConfigSecretName | quote }}
-            items:
-              - key: {{ $sonarqubeConfigSecretKey | quote }}
-                path: sonar.properties
-          {{- else }}
-          configMap:
-            name: horizon-sonarqube-config
-            items:
-              - key: sonar.properties
-                path: sonar.properties
-          {{- end }}
-        {{- end }}
         - name: sonarqube-data
           persistentVolumeClaim:
             claimName: horizon-sonarqube-data
