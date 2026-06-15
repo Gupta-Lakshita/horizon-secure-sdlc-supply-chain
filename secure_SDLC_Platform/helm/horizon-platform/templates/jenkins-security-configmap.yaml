@@ -15,8 +15,11 @@ data:
     import hudson.model.User
     import hudson.security.FullControlOnceLoggedInAuthorizationStrategy
     import hudson.security.HudsonPrivateSecurityRealm
+    import hudson.security.LDAPSecurityRealm
+    import hudson.util.Secret
     import jenkins.model.Jenkins
     import jenkins.security.ApiTokenProperty
+    import jenkins.security.plugins.ldap.FromGroupSearchLDAPGroupMembershipStrategy
 
     def env = System.getenv()
     def securityEnabled = (env.get("HORIZON_JENKINS_SECURITY_ENABLED") ?: "true").toBoolean()
@@ -33,32 +36,85 @@ data:
       value
     }
 
+    def optional = { name, fallback ->
+      def value = env.get(name)
+      value == null || value.trim().isEmpty() ? fallback : value.trim()
+    }
+
     def adminUser = required("JENKINS_ADMIN_USER")
     def adminPassword = required("JENKINS_ADMIN_PASSWORD")
     def serviceUser = required("JENKINS_SERVICE_USER")
     def servicePassword = required("JENKINS_SERVICE_PASSWORD")
     def serviceToken = required("JENKINS_SERVICE_TOKEN")
+    def securityRealm = optional("HORIZON_JENKINS_SECURITY_REALM", "private").toLowerCase()
 
     def jenkins = Jenkins.get()
-    def realm = jenkins.getSecurityRealm()
-    if (!(realm instanceof HudsonPrivateSecurityRealm)) {
-      realm = new HudsonPrivateSecurityRealm(false, false, null)
-      jenkins.setSecurityRealm(realm)
-      println("[horizon] Configured Jenkins private security realm")
-    }
 
-    def ensureAccount = { String id, String password ->
-      def existing = realm.getUser(id)
-      if (existing == null) {
-        realm.createAccount(id, password)
-        println("[horizon] Created Jenkins account: ${id}")
-      } else {
-        println("[horizon] Jenkins account already exists: ${id}")
+    def configurePrivateRealm = {
+      def realm = jenkins.getSecurityRealm()
+      if (!(realm instanceof HudsonPrivateSecurityRealm)) {
+        realm = new HudsonPrivateSecurityRealm(false, false, null)
+        jenkins.setSecurityRealm(realm)
+        println("[horizon] Configured Jenkins private security realm")
       }
+
+      def ensureAccount = { String id, String password ->
+        def existing = realm.getUser(id)
+        if (existing == null) {
+          realm.createAccount(id, password)
+          println("[horizon] Created Jenkins account: ${id}")
+        } else {
+          println("[horizon] Jenkins account already exists: ${id}")
+        }
+      }
+
+      ensureAccount(adminUser, adminPassword)
+      ensureAccount(serviceUser, servicePassword)
     }
 
-    ensureAccount(adminUser, adminPassword)
-    ensureAccount(serviceUser, servicePassword)
+    def configureLdapRealm = {
+      def server = required("JENKINS_LDAP_SERVER")
+      def rootDn = required("JENKINS_LDAP_ROOT_DN")
+      def userSearchBase = optional("JENKINS_LDAP_USER_SEARCH_BASE", "")
+      def userSearch = optional("JENKINS_LDAP_USER_SEARCH", "uid={0}")
+      def groupSearchBase = optional("JENKINS_LDAP_GROUP_SEARCH_BASE", "")
+      def groupSearchFilter = optional("JENKINS_LDAP_GROUP_SEARCH_FILTER", "(&(objectClass=groupOfNames)(member={0}))")
+      def managerDn = optional("JENKINS_LDAP_MANAGER_DN", null)
+      def managerPassword = optional("JENKINS_LDAP_MANAGER_PASSWORD", "")
+      def managerSecret = managerPassword ? Secret.fromString(managerPassword) : null
+      def groupStrategy = new FromGroupSearchLDAPGroupMembershipStrategy(groupSearchFilter)
+
+      def realm = new LDAPSecurityRealm(
+        server,
+        rootDn,
+        userSearchBase,
+        userSearch,
+        groupSearchBase,
+        null,
+        groupStrategy,
+        managerDn,
+        managerSecret,
+        false,
+        false,
+        null,
+        null,
+        "displayName",
+        "mail"
+      )
+      jenkins.setSecurityRealm(realm)
+      println("[horizon] Configured Jenkins LDAP security realm: server=${server}, rootDN=${rootDn}, userSearchBase=${userSearchBase}, groupSearchBase=${groupSearchBase}")
+    }
+
+    switch (securityRealm) {
+      case "ldap":
+        configureLdapRealm()
+        break
+      case "private":
+        configurePrivateRealm()
+        break
+      default:
+        throw new IllegalStateException("[horizon] Unsupported Jenkins security realm: ${securityRealm}")
+    }
 
     def strategy = new FullControlOnceLoggedInAuthorizationStrategy()
     strategy.setAllowAnonymousRead(false)

@@ -75,6 +75,8 @@ class RunnerConfig:
     findings_upload_token = os.getenv("HORIZON_FINDINGS_UPLOAD_TOKEN", "")
     security_fail_on_severity = os.getenv("HORIZON_SECURITY_FAIL_ON_SEVERITY", "CRITICAL,HIGH")
     security_fail_on_dashboard_upload = os.getenv("HORIZON_SECURITY_FAIL_ON_DASHBOARD_UPLOAD", "false").lower() == "true"
+    policy_bundle_dir = Path(os.getenv("HORIZON_POLICY_BUNDLE_DIR", str(Path(__file__).resolve().parent / "policy_bundles")))
+    policy_bundle_mode = os.getenv("HORIZON_POLICY_BUNDLE_MODE", "managed")
 
 
 config = RunnerConfig()
@@ -1599,7 +1601,12 @@ def blocking_findings(findings: List[Dict[str, Any]], thresholds: List[str]) -> 
     if not thresholds:
         return []
     minimum = min(SEVERITY_RANK[item] for item in thresholds)
-    return [finding for finding in findings if SEVERITY_RANK[normalize_security_severity(finding.get("severity"))] >= minimum]
+    return [
+        finding
+        for finding in findings
+        if str(finding.get("status") or "").upper() != "WAIVED"
+        and SEVERITY_RANK[normalize_security_severity(finding.get("severity"))] >= minimum
+    ]
 
 
 def write_command_audit(path: Path, command: List[str], result: subprocess.CompletedProcess) -> None:
@@ -1666,6 +1673,9 @@ def finalize_security_report(
     extra: Optional[Dict[str, Any]] = None,
 ) -> None:
     thresholds = security_thresholds(action)
+    evidence_path = relative_path(report_dir / "evidence.json", context["runDir"])
+    for finding in findings:
+        finding.setdefault("evidence_uri", evidence_path)
     blockers = blocking_findings(findings, thresholds)
     upload = upload_security_findings(findings, context)
     write_json(report_dir / "findings.json", findings)
@@ -1884,7 +1894,80 @@ warn[msg] {
     return path
 
 
-def parse_conftest_report(path: Path) -> List[Dict[str, Any]]:
+def policy_bundle_slug(bundle: Dict[str, Any]) -> str:
+    name = str(bundle.get("name") or bundle.get("bundle") or bundle.get("ref") or "horizon-baseline")
+    name = name.split("@", 1)[0]
+    version = str(bundle.get("version") or "1.0.0")
+    return f"{safe_file_token(name)}-{safe_file_token(version)}"
+
+
+def default_policy_bundles() -> List[Dict[str, Any]]:
+    return [
+        {"name": "horizon-baseline", "version": "1.0.0", "ref": "horizon-baseline@1.0.0", "source": "runner-fallback"},
+        {"name": "horizon-kubernetes-restricted-lite", "version": "1.0.0", "ref": "horizon-kubernetes-restricted-lite@1.0.0", "source": "runner-fallback"},
+    ]
+
+
+def resolve_policy_bundles(action: Dict[str, Any], report_dir: Path, source_dir: Path) -> List[Dict[str, Any]]:
+    configured = action.get("policyBundles") or (action.get("policy") or {}).get("bundles") or default_policy_bundles()
+    resolved: List[Dict[str, Any]] = []
+    for item in configured:
+        if isinstance(item, str):
+            name, _, version = item.partition("@")
+            bundle = {"name": name, "version": version or "1.0.0", "ref": f"{name}@{version or '1.0.0'}", "source": "license-control-plane"}
+        elif isinstance(item, dict):
+            name = str(item.get("name") or item.get("bundle") or "").strip()
+            if not name and item.get("ref"):
+                name = str(item["ref"]).split("@", 1)[0]
+            version = str(item.get("version") or (str(item.get("ref") or "").split("@", 1)[1] if "@" in str(item.get("ref") or "") else "1.0.0"))
+            bundle = {
+                "name": name,
+                "version": version,
+                "ref": item.get("ref") or f"{name}@{version}",
+                "source": item.get("source") or action.get("policyBundleSource") or "license-control-plane",
+                "description": item.get("description") or "",
+            }
+        else:
+            continue
+        if not bundle.get("name"):
+            continue
+
+        fallback_dir = config.policy_bundle_dir / str(bundle["name"]) / str(bundle["version"])
+        if not fallback_dir.exists():
+            fallback_dir = config.policy_bundle_dir / str(bundle["name"])
+        target_dir = report_dir / "policies" / policy_bundle_slug(bundle)
+        target_dir.mkdir(parents=True, exist_ok=True)
+        if fallback_dir.exists():
+            shutil.copytree(fallback_dir, target_dir, dirs_exist_ok=True)
+            bundle["path"] = str(target_dir)
+            bundle["resolved"] = True
+            bundle["resolvedSource"] = str(fallback_dir)
+        else:
+            built_in_conftest_policy(target_dir)
+            bundle["path"] = str(target_dir)
+            bundle["resolved"] = False
+            bundle["resolvedSource"] = "generated-baseline"
+        resolved.append(bundle)
+
+    if as_bool(action.get("clientOverridesEnabled"), False):
+        for name in ("policy", "policies", ".horizon/policy", ".horizon/policies"):
+            path = source_dir / name
+            if path.exists():
+                bundle = {
+                    "name": "client-overrides",
+                    "version": "repo",
+                    "ref": "client-overrides@repo",
+                    "source": "client-repository",
+                    "path": str(path),
+                    "resolved": True,
+                    "resolvedSource": str(path),
+                }
+                resolved.append(bundle)
+
+    return resolved
+
+
+def parse_conftest_report(path: Path, bundle: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
     findings: List[Dict[str, Any]] = []
     if not path.exists():
         return findings
@@ -1895,24 +1978,100 @@ def parse_conftest_report(path: Path) -> List[Dict[str, Any]]:
     for result in doc if isinstance(doc, list) else []:
         target = result.get("filename") or result.get("namespace") or "manifest"
         for failure in result.get("failures") or []:
+            description = str(failure.get("msg") if isinstance(failure, dict) else failure)
+            metadata = (failure.get("metadata") or {}) if isinstance(failure, dict) else {}
+            rule_id = str(metadata.get("rule_id") or metadata.get("id") or "").strip()
+            if not rule_id:
+                match = re.search(r"\b(HR-POL-[A-Z0-9-]+)\b", description)
+                rule_id = match.group(1) if match else security_finding_id(bundle.get("ref") if bundle else "", target, description)
             findings.append(make_security_finding(
                 category="Policy Violation",
                 target=target,
                 severity="HIGH",
-                rule="conftest-deny",
-                description=str(failure.get("msg") if isinstance(failure, dict) else failure),
-                extra={"scanner": "conftest"},
+                rule=rule_id,
+                description=description,
+                fixed_version="Review policy bundle guidance, adjust the manifest, or request a time-bound waiver.",
+                extra={
+                    "scanner": "conftest",
+                    "policy_bundle": (bundle or {}).get("name"),
+                    "policy_version": (bundle or {}).get("version"),
+                    "policy_ref": (bundle or {}).get("ref"),
+                    "policy_decision": "deny",
+                    "waiver_status": "none",
+                },
             ))
         for warning in result.get("warnings") or []:
+            description = str(warning.get("msg") if isinstance(warning, dict) else warning)
+            metadata = (warning.get("metadata") or {}) if isinstance(warning, dict) else {}
+            rule_id = str(metadata.get("rule_id") or metadata.get("id") or "").strip()
+            if not rule_id:
+                match = re.search(r"\b(HR-POL-[A-Z0-9-]+)\b", description)
+                rule_id = match.group(1) if match else security_finding_id(bundle.get("ref") if bundle else "", target, description)
             findings.append(make_security_finding(
                 category="Policy Violation",
                 target=target,
                 severity="MEDIUM",
-                rule="conftest-warn",
-                description=str(warning.get("msg") if isinstance(warning, dict) else warning),
-                extra={"scanner": "conftest"},
+                rule=rule_id,
+                description=description,
+                fixed_version="Review policy bundle guidance and adjust the manifest when practical.",
+                extra={
+                    "scanner": "conftest",
+                    "policy_bundle": (bundle or {}).get("name"),
+                    "policy_version": (bundle or {}).get("version"),
+                    "policy_ref": (bundle or {}).get("ref"),
+                    "policy_decision": "warn",
+                    "waiver_status": "none",
+                },
             ))
     return findings
+
+
+def load_policy_waivers(source_dir: Path) -> List[Dict[str, Any]]:
+    for rel in (".horizon/policy-waivers.json", ".horizon/waivers.json", "policy-waivers.json"):
+        path = source_dir / rel
+        if path.exists():
+            try:
+                data = json.loads(path.read_text() or "[]")
+            except json.JSONDecodeError:
+                return []
+            return data if isinstance(data, list) else data.get("waivers", [])
+    return []
+
+
+def waiver_matches_finding(waiver: Dict[str, Any], finding: Dict[str, Any]) -> bool:
+    rule = str(waiver.get("rule") or waiver.get("rule_id") or waiver.get("policy_rule") or "")
+    bundle = str(waiver.get("bundle") or waiver.get("policy_bundle") or "")
+    target = str(waiver.get("target") or "")
+    if rule and rule not in {str(finding.get("rule") or ""), str(finding.get("vulnerability_id") or "")}:
+        return False
+    if bundle and bundle != str(finding.get("policy_bundle") or ""):
+        return False
+    if target and target not in str(finding.get("target") or ""):
+        return False
+    expires = waiver.get("expires_at") or waiver.get("expiresAt")
+    if expires:
+        try:
+            if parse_time(str(expires)) <= utc_now():
+                return False
+        except ValueError:
+            return False
+    return bool(rule or bundle or target)
+
+
+def apply_policy_waivers(findings: List[Dict[str, Any]], source_dir: Path, enabled: bool) -> Dict[str, Any]:
+    waivers = load_policy_waivers(source_dir) if enabled else []
+    applied = 0
+    for finding in findings:
+        for waiver in waivers:
+            if waiver_matches_finding(waiver, finding):
+                finding["status"] = "WAIVED"
+                finding["waiver_status"] = "active"
+                finding["waiver_expiry"] = waiver.get("expires_at") or waiver.get("expiresAt") or ""
+                finding["waiver_reason"] = waiver.get("reason") or ""
+                finding["waiver_approved_by"] = waiver.get("approved_by") or waiver.get("approvedBy") or ""
+                applied += 1
+                break
+    return {"enabled": enabled, "loaded": len(waivers), "applied": applied}
 
 
 def execute_security_preflight(action: Dict[str, Any], context: Dict[str, Any]) -> None:
@@ -2163,26 +2322,28 @@ def execute_security_policy(action: Dict[str, Any], context: Dict[str, Any]) -> 
         else:
             conftest_inputs.append(item)
 
-    policy_dirs = [report_dir / "policies"]
-    built_in_conftest_policy(policy_dirs[0])
-    for name in ("policy", "policies", ".horizon/policy", ".horizon/policies"):
-        path = source_dir / name
-        if path.exists():
-            policy_dirs.append(path)
+    policy_bundles = resolve_policy_bundles(action, report_dir, source_dir)
 
     if shutil.which("conftest") and conftest_inputs:
-        conftest_json = report_dir / "conftest.json"
-        conftest_cmd = ["conftest", "test", "--output", "json"]
-        for policy_dir in policy_dirs:
-            conftest_cmd.extend(["--policy", str(policy_dir)])
-        conftest_cmd.extend(str(item) for item in conftest_inputs)
-        conftest = run_command(conftest_cmd, cwd=source_dir, check=False)
-        write_command_audit(report_dir / "conftest-command.txt", conftest_cmd, conftest)
-        conftest_json.write_text(conftest.stdout or "[]")
-        findings.extend(parse_conftest_report(conftest_json))
+        for bundle in policy_bundles:
+            policy_path = bundle.get("path")
+            if not policy_path:
+                continue
+            bundle_token = policy_bundle_slug(bundle)
+            conftest_json = report_dir / f"conftest-{bundle_token}.json"
+            conftest_cmd = ["conftest", "test", "--output", "json", "--policy", str(policy_path)]
+            conftest_cmd.extend(str(item) for item in conftest_inputs)
+            conftest = run_command(conftest_cmd, cwd=source_dir, check=False)
+            write_command_audit(report_dir / f"conftest-command-{bundle_token}.txt", conftest_cmd, conftest)
+            conftest_json.write_text(conftest.stdout or "[]")
+            findings.extend(parse_conftest_report(conftest_json, bundle=bundle))
         tools.append("conftest")
 
     write_json(report_dir / "manifest-inputs.json", [relative_path(path, source_dir) for path in conftest_inputs])
+    write_json(report_dir / "policy-bundle-manifest.json", [
+        {key: bundle.get(key) for key in ("name", "version", "ref", "source", "resolved", "resolvedSource", "description")}
+        for bundle in policy_bundles
+    ])
 
     if (source_dir / "Dockerfile").exists():
         dockerfile = (source_dir / "Dockerfile").read_text(errors="ignore")
@@ -2193,8 +2354,17 @@ def execute_security_policy(action: Dict[str, Any], context: Dict[str, Any]) -> 
                 severity="MEDIUM",
                 rule="container-non-root-user",
                 description="Dockerfile should run as a non-root user for enterprise workloads.",
-                extra={"scanner": "horizon-policy"},
+                fixed_version="Add a non-root USER directive and ensure file permissions support it.",
+                extra={
+                    "scanner": "horizon-policy",
+                    "policy_bundle": "horizon-baseline",
+                    "policy_version": "1.0.0",
+                    "policy_ref": "horizon-baseline@1.0.0",
+                    "policy_decision": "warn",
+                    "waiver_status": "none",
+                },
             ))
+    waiver_summary = apply_policy_waivers(findings, source_dir, as_bool(action.get("waiversEnabled"), False))
 
     finalize_security_report(
         action=action,
@@ -2203,7 +2373,13 @@ def execute_security_policy(action: Dict[str, Any], context: Dict[str, Any]) -> 
         stage="policy-validation",
         tool_names=tools or ["horizon-policy"],
         findings=findings,
-        extra={"manifestInputCount": len(conftest_inputs), "policyCount": len(policy_dirs)},
+        extra={
+            "manifestInputCount": len(conftest_inputs),
+            "policyBundleCount": len(policy_bundles),
+            "policyBundles": [bundle.get("ref") for bundle in policy_bundles],
+            "policyBundleMode": action.get("policyBundleMode") or config.policy_bundle_mode,
+            "waivers": waiver_summary,
+        },
     )
 
 

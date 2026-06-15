@@ -20,6 +20,7 @@
 {{- $ldap := default dict $identity.ldap -}}
 {{- $backendSecretName := default "horizon-backend-secrets" $platform.backendSecretName -}}
 {{- $jenkinsCredentialsSecretName := default "horizon-jenkins-credentials" $jenkins.credentialsSecretName -}}
+{{- $jenkinsLdap := default dict $jenkins.ldap -}}
 {{- $jenkinsPath := default "/" $platformHosts.jenkinsPath -}}
 {{- $imagePullSecrets := default (default list $values.imagePullSecrets) $platform.imagePullSecrets -}}
 {{- if default true $frontend.enabled }}
@@ -350,6 +351,28 @@ spec:
               value: {{ default "/usr/local/bin/horizon-runner" $jenkinsRunner.cliPath | quote }}
             - name: HORIZON_JENKINS_SECURITY_ENABLED
               value: {{ default true $jenkins.securityEnabled | quote }}
+            - name: HORIZON_JENKINS_SECURITY_REALM
+              value: {{ default "private" $jenkins.securityRealm | quote }}
+            - name: JENKINS_LDAP_SERVER
+              value: {{ default "ldap://horizon-openldap:389" $ldap.host | quote }}
+            - name: JENKINS_LDAP_ROOT_DN
+              value: {{ default "dc=horizonrelevance,dc=local" $ldap.baseDn | quote }}
+            - name: JENKINS_LDAP_USER_SEARCH_BASE
+              value: {{ default (default "ou=users" $ldap.userSearchBase) $jenkinsLdap.userSearchBase | quote }}
+            - name: JENKINS_LDAP_USER_SEARCH
+              value: {{ default "uid={0}" $jenkinsLdap.userSearch | quote }}
+            - name: JENKINS_LDAP_GROUP_SEARCH_BASE
+              value: {{ default (default "ou=groups" $ldap.groupSearchBase) $jenkinsLdap.groupSearchBase | quote }}
+            - name: JENKINS_LDAP_GROUP_SEARCH_FILTER
+              value: {{ default "(&(objectClass=groupOfNames)(member={0}))" $jenkinsLdap.groupSearchFilter | quote }}
+            - name: JENKINS_LDAP_MANAGER_DN
+              value: {{ default "cn=admin,dc=horizonrelevance,dc=local" $ldap.bindDn | quote }}
+            - name: JENKINS_LDAP_MANAGER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ default "horizon-ldap-bind" $ldap.bindSecretName | quote }}
+                  key: {{ default "password" $ldap.bindSecretKey | quote }}
+                  optional: true
             - name: JENKINS_ADMIN_USER
               valueFrom:
                 secretKeyRef:
@@ -512,6 +535,10 @@ spec:
               value: {{ default "CRITICAL,HIGH" $runner.securityFailOnSeverity | quote }}
             - name: HORIZON_SECURITY_FAIL_ON_DASHBOARD_UPLOAD
               value: {{ default false $runner.securityFailOnDashboardUpload | quote }}
+            - name: HORIZON_POLICY_BUNDLE_MODE
+              value: {{ default "managed" $runner.policyBundleMode | quote }}
+            - name: HORIZON_POLICY_BUNDLE_DIR
+              value: {{ default "/app/app/policy_bundles" $runner.policyBundleDir | quote }}
             - name: HORIZON_PUBLIC_KEY_PATH
               value: /etc/horizon/license/publicKeyPem
           volumeMounts:

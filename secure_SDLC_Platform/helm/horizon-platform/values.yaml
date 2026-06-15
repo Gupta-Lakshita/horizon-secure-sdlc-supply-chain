@@ -203,11 +203,19 @@ components:
     image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/frontend:1.4.27
   backend:
     enabled: true
-    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.50
+    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.51
   jenkins:
     enabled: true
     image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/jenkins:1.0.8
     securityEnabled: true
+    # private keeps the built-in Jenkins users; ldap delegates user login to the
+    # client LDAP/AD settings under identity.ldap plus the optional overrides below.
+    securityRealm: private
+    ldap:
+      userSearchBase: ou=users
+      userSearch: uid={0}
+      groupSearchBase: ou=groups
+      groupSearchFilter: (&(objectClass=groupOfNames)(member={0}))
     executionMode: runner
     credentialsSecretName: horizon-jenkins-credentials
     adminUser: horizon-admin
@@ -219,7 +227,7 @@ components:
       source: runner
   runner:
     enabled: true
-    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/runner:0.1.15
+    image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/runner:0.1.16
     imagePullPolicy: Always
     replicas: 1
     servicePort: 8080
@@ -242,6 +250,8 @@ components:
     findingsUploadTokenSecretOptional: true
     securityFailOnSeverity: CRITICAL,HIGH
     securityFailOnDashboardUpload: false
+    policyBundleMode: managed
+    policyBundleDir: /app/app/policy_bundles
   sonarqube:
     enabled: true
     image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/sonarqube:10.4-community

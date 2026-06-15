@@ -45,7 +45,7 @@ lifecycle:
   defaultDeletionPolicy: retain
 
 client:
-  id: Oracle
+  id: Oracle-dummy
   name: "Oracle"
   industry: technology
   dataBoundary: client-hosted
@@ -56,8 +56,8 @@ license:
   # Demo endpoint uses HTTP until license.horizonrelevance.com has a trusted
   # public certificate. Production clients should use HTTPS with ACM/valid CA.
   syncEndpoint: http://license.horizonrelevance.com/api/v1/licenses/sync
-  clientId: oracle
-  installationId: oracle-trial-nonprod-001
+  clientId: Oracle-dummy
+  installationId: oracle-dummy-nonprod-921570400913-us-east-1-880259
   publicKeyId: arn:aws:kms:us-east-1:426946630837:key/164f168a-6697-4a4d-9160-76bb02f2dd2b
   activationTokenSecretName: horizon-license-activation
   renewalCheckHours: 24
@@ -167,12 +167,18 @@ components:
     image: "426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/frontend:1.4.27"
   backend:
     enabled: true
-    image: "426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.50"
+    image: "426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/backend:1.4.51"
   jenkins:
     enabled: true
     image: "426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/jenkins:1.0.8"
     executionMode: runner
     securityEnabled: true
+    securityRealm: ldap
+    ldap:
+      userSearchBase: ou=users
+      userSearch: uid={0}
+      groupSearchBase: ou=groups
+      groupSearchFilter: (&(objectClass=groupOfNames)(member={0}))
     credentialsSecretName: horizon-jenkins-credentials
     adminUser: oracle.admin
     serviceUser: horizon-backend
@@ -183,7 +189,7 @@ components:
       source: runner
   runner:
     enabled: true
-    image: "426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/runner:0.1.15"
+    image: "426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/runner:0.1.16"
     executeActions: true
     kanikoImage: gcr.io/kaniko-project/executor:v1.23.2
     keepBuildJobs: false
