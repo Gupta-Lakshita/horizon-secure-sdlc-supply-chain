@@ -1,16 +1,19 @@
 import base64
+import csv
+import hashlib
 import json
+import math
 import os
 import re
 import shlex
 import shutil
 import subprocess
 import tempfile
+import time
 import uuid
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from pathlib import Path
-from statistics import mean
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
@@ -70,6 +73,10 @@ class RunnerConfig:
     namespace = os.getenv("HORIZON_RUNNER_NAMESPACE", os.getenv("POD_NAMESPACE", "default"))
     ui_test_isolated = os.getenv("HORIZON_UI_TEST_ISOLATED", "false").lower() == "true"
     ui_test_image = os.getenv("HORIZON_UI_TEST_IMAGE", "mcr.microsoft.com/playwright:v1.44.1-jammy")
+    findings_upload_url = os.getenv("HORIZON_FINDINGS_UPLOAD_URL", "http://horizon-backend:8000/upload_vulnerabilities")
+    findings_upload_token = os.getenv("HORIZON_FINDINGS_UPLOAD_TOKEN", "")
+    security_fail_on_severity = os.getenv("HORIZON_SECURITY_FAIL_ON_SEVERITY", "CRITICAL,HIGH")
+    security_fail_on_dashboard_upload = os.getenv("HORIZON_SECURITY_FAIL_ON_DASHBOARD_UPLOAD", "false").lower() == "true"
 
 
 config = RunnerConfig()
@@ -173,8 +180,10 @@ def run_command(
     timeout: Optional[int] = None,
     check: bool = True,
     log_output: bool = True,
+    display_args: Optional[List[str]] = None,
 ) -> subprocess.CompletedProcess:
-    print(f"$ {command_text(args)}", flush=True)
+    visible_args = display_args or args
+    print(f"$ {command_text(visible_args)}", flush=True)
     merged_env = os.environ.copy()
     if env:
         merged_env.update(env)
@@ -192,7 +201,7 @@ def run_command(
     if log_output and result.stderr:
         print(result.stderr, flush=True)
     if check and result.returncode != 0:
-        raise HTTPException(status_code=500, detail=f"Action command failed ({result.returncode}): {command_text(args)}")
+        raise HTTPException(status_code=500, detail=f"Action command failed ({result.returncode}): {command_text(visible_args)}")
     return result
 
 
@@ -389,6 +398,11 @@ def report_artifacts(report_dir: Path, context: Dict[str, Any]) -> Dict[str, Any
         ("json", "*.json"),
         ("html", "html-report/index.html"),
         ("html", "**/index.html"),
+        ("jtl", "*.jtl"),
+        ("log", "*.log"),
+        ("text", "*.txt"),
+        ("properties", "*.properties"),
+        ("sarif", "*.sarif"),
         ("screenshot", "**/*.png"),
         ("video", "**/*.webm"),
         ("trace", "**/*.zip"),
@@ -528,17 +542,135 @@ def print_quality_summary(summary: Dict[str, Any]) -> None:
         print(f"Collection: {summary['collection']}", flush=True)
     if summary.get("environment"):
         print(f"Environment: {summary['environment']}", flush=True)
-    print(
-        "Tests: total={total} passed={passed} failed={failed} errors={errors} skipped={skipped} duration={duration}s".format(
-            total=summary.get("totalTests", 0),
-            passed=summary.get("passedTests", 0),
-            failed=summary.get("failedTests", 0),
-            errors=summary.get("errorTests", 0),
-            skipped=summary.get("skippedTests", 0),
-            duration=summary.get("durationSeconds", 0),
-        ),
-        flush=True,
-    )
+    if summary.get("qualityGateStatus") is not None or summary.get("sonarStatus") is not None:
+        print(
+            "Code Quality: mode={mode} sonar={sonar} gate={gate} project={project} issues={issues} bugs={bugs} vulnerabilities={vulnerabilities} smells={smells} coverage={coverage}".format(
+                mode=summary.get("mode", "n/a"),
+                sonar=summary.get("sonarStatus", "n/a"),
+                gate=summary.get("qualityGateStatus", "n/a"),
+                project=summary.get("projectKey", "n/a"),
+                issues=summary.get("issueCount", "n/a"),
+                bugs=summary.get("measures", {}).get("bugs", "n/a"),
+                vulnerabilities=summary.get("measures", {}).get("vulnerabilities", "n/a"),
+                smells=summary.get("measures", {}).get("code_smells", "n/a"),
+                coverage=summary.get("measures", {}).get("coverage", "n/a"),
+            ),
+            flush=True,
+        )
+        for missing in summary.get("missingConfiguration") or []:
+            print(f" - [MISSING] {missing}", flush=True)
+        for condition in summary.get("qualityGateConditions") or []:
+            print(
+                " - [{status}] {metric}: actual={actual} threshold={threshold}".format(
+                    status=condition.get("status", "UNKNOWN"),
+                    metric=condition.get("metricKey", "metric"),
+                    actual=condition.get("actualValue", "n/a"),
+                    threshold=condition.get("errorThreshold", "n/a"),
+                ),
+                flush=True,
+            )
+        for issue in summary.get("issues") or []:
+            print(
+                " - [{severity}] {type} {component}:{line} {message}".format(
+                    severity=issue.get("severity", "UNKNOWN"),
+                    type=issue.get("type", "ISSUE"),
+                    component=issue.get("component", ""),
+                    line=issue.get("line", ""),
+                    message=issue.get("message", ""),
+                ),
+                flush=True,
+            )
+    elif summary.get("totalSamples") is not None:
+        print(
+            "Performance: samples={samples} failed={failed} error={error}% avg={avg}ms p90={p90}ms p95={p95}ms p99={p99}ms max={max_ms}ms throughput={throughput}/s duration={duration}s".format(
+                samples=summary.get("totalSamples", 0),
+                failed=summary.get("failedSamples", 0),
+                error=summary.get("errorPercent", 0),
+                avg=summary.get("averageResponseMs", summary.get("averageMs", 0)),
+                p90=summary.get("p90ResponseMs", 0),
+                p95=summary.get("p95ResponseMs", summary.get("p95Ms", 0)),
+                p99=summary.get("p99ResponseMs", 0),
+                max_ms=summary.get("maxResponseMs", 0),
+                throughput=summary.get("throughputPerSecond", 0),
+                duration=summary.get("durationSeconds", 0),
+            ),
+            flush=True,
+        )
+        if summary.get("generatedSmokePlan"):
+            print("Plan: generated smoke/baseline JMX; provide a repository JMX plan for enterprise load coverage.", flush=True)
+        thresholds = summary.get("thresholds") or {}
+        if thresholds:
+            print(f"Thresholds: {thresholds}", flush=True)
+        for failure in summary.get("failedThresholds") or []:
+            print(f" - [FAILED] {failure}", flush=True)
+        for sampler in (summary.get("samplers") or [])[:20]:
+            print(
+                " - [{status}] {name}: samples={samples} failed={failed} avg={avg}ms p95={p95}ms p99={p99}ms throughput={throughput}/s codes={codes}".format(
+                    status=sampler.get("status", "UNKNOWN"),
+                    name=sampler.get("name") or "sampler",
+                    samples=sampler.get("samples", 0),
+                    failed=sampler.get("failures", 0),
+                    avg=sampler.get("averageMs", 0),
+                    p95=sampler.get("p95Ms", 0),
+                    p99=sampler.get("p99Ms", 0),
+                    throughput=sampler.get("throughputPerSecond", 0),
+                    codes=sampler.get("responseCodes", {}),
+                ),
+                flush=True,
+            )
+    elif summary.get("findingCounts") is not None or summary.get("dashboardUpload") is not None:
+        counts = summary.get("findingCounts") or {}
+        blocking = summary.get("blockingFindings", 0)
+        print(
+            "Security Findings: total={total} blocking={blocking} critical={critical} high={high} medium={medium} low={low} unknown={unknown}".format(
+                total=summary.get("findingCount", 0),
+                blocking=blocking,
+                critical=counts.get("CRITICAL", 0),
+                high=counts.get("HIGH", 0),
+                medium=counts.get("MEDIUM", 0),
+                low=counts.get("LOW", 0),
+                unknown=counts.get("UNKNOWN", 0),
+            ),
+            flush=True,
+        )
+        if summary.get("tools"):
+            print(f"Security tools: {', '.join(summary.get('tools') or [])}", flush=True)
+        upload = summary.get("dashboardUpload") or {}
+        if upload:
+            print(
+                "Dashboard upload: status={status} endpoint={endpoint} uploaded={count}".format(
+                    status=upload.get("status", "UNKNOWN"),
+                    endpoint=upload.get("endpoint", "not configured"),
+                    count=upload.get("count", 0),
+                ),
+                flush=True,
+            )
+        for failure in summary.get("failedThresholds") or []:
+            print(f" - [FAILED] {failure}", flush=True)
+        for finding in (summary.get("sampleFindings") or [])[:20]:
+            print(
+                " - [{severity}] {source} {component} {target} {rule}: {description}".format(
+                    severity=finding.get("severity", "UNKNOWN"),
+                    source=finding.get("source", "Security Finding"),
+                    component=finding.get("package_name") or "component",
+                    target=finding.get("target") or "",
+                    rule=finding.get("vulnerability_id") or finding.get("rule") or "",
+                    description=(finding.get("description") or "")[:180],
+                ),
+                flush=True,
+            )
+    else:
+        print(
+            "Tests: total={total} passed={passed} failed={failed} errors={errors} skipped={skipped} duration={duration}s".format(
+                total=summary.get("totalTests", 0),
+                passed=summary.get("passedTests", 0),
+                failed=summary.get("failedTests", 0),
+                errors=summary.get("errorTests", 0),
+                skipped=summary.get("skippedTests", 0),
+                duration=summary.get("durationSeconds", 0),
+            ),
+            flush=True,
+        )
     for case in (summary.get("testCases") or [])[:20]:
         label = f"{case.get('className') + ' - ' if case.get('className') else ''}{case.get('name')}"
         print(f" - [{case.get('status')}] {label}", flush=True)
@@ -1376,62 +1508,570 @@ def execute_quality_api(action: Dict[str, Any], context: Dict[str, Any]) -> None
         })
 
 
+def _jmeter_plan_candidates(action: Dict[str, Any]) -> List[str]:
+    candidates = [
+        str(action.get("testPlan") or "").strip(),
+        "tests/jmeter/test.jmx",
+        "tests/jmeter/performance.jmx",
+        "tests/jmeter/load-test.jmx",
+        "tests/performance/test.jmx",
+        "tests/performance/performance.jmx",
+        "qe/performance/E2E_performance.jmx",
+    ]
+    seen = set()
+    ordered = []
+    for candidate in candidates:
+        if candidate and candidate not in seen:
+            ordered.append(candidate)
+            seen.add(candidate)
+    return ordered
+
+
+def _jmeter_percentile(values: List[int], percentile: float) -> int:
+    if not values:
+        return 0
+    sorted_values = sorted(values)
+    index = max(0, min(len(sorted_values) - 1, math.ceil(len(sorted_values) * percentile / 100) - 1))
+    return sorted_values[index]
+
+
+def _jmeter_generate_smoke_plan(plan_path: Path) -> None:
+    plan_path.parent.mkdir(parents=True, exist_ok=True)
+    plan_path.write_text("""<?xml version="1.0" encoding="UTF-8"?>
+<jmeterTestPlan version="1.2" properties="5.0" jmeter="5.6.3">
+  <hashTree>
+    <TestPlan guiclass="TestPlanGui" testclass="TestPlan" testname="Horizon Generated Smoke Performance Test" enabled="true">
+      <stringProp name="TestPlan.comments">Generated by Horizon runner when no repository JMX plan is supplied. Use a repository-owned JMX plan for enterprise load coverage.</stringProp>
+      <boolProp name="TestPlan.functional_mode">false</boolProp>
+      <boolProp name="TestPlan.tearDown_on_shutdown">true</boolProp>
+      <boolProp name="TestPlan.serialize_threadgroups">false</boolProp>
+      <elementProp name="TestPlan.user_defined_variables" elementType="Arguments" guiclass="ArgumentsPanel" testclass="Arguments" testname="User Defined Variables" enabled="true">
+        <collectionProp name="Arguments.arguments"/>
+      </elementProp>
+    </TestPlan>
+    <hashTree>
+      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="Baseline Availability Load" enabled="true">
+        <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
+        <elementProp name="ThreadGroup.main_controller" elementType="LoopController" guiclass="LoopControlPanel" testclass="LoopController" testname="Loop Controller" enabled="true">
+          <boolProp name="LoopController.continue_forever">false</boolProp>
+          <stringProp name="LoopController.loops">${__P(jmeterLoops,5)}</stringProp>
+        </elementProp>
+        <stringProp name="ThreadGroup.num_threads">${__P(jmeterThreads,10)}</stringProp>
+        <stringProp name="ThreadGroup.ramp_time">${__P(jmeterRampSeconds,30)}</stringProp>
+        <boolProp name="ThreadGroup.scheduler">false</boolProp>
+      </ThreadGroup>
+      <hashTree>
+        <ConfigTestElement guiclass="HttpDefaultsGui" testclass="ConfigTestElement" testname="HTTP Request Defaults" enabled="true">
+          <stringProp name="HTTPSampler.domain">${__P(jmeterHost,localhost)}</stringProp>
+          <stringProp name="HTTPSampler.port">${__P(jmeterPort,80)}</stringProp>
+          <stringProp name="HTTPSampler.protocol">${__P(jmeterProtocol,http)}</stringProp>
+          <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" enabled="true">
+            <collectionProp name="Arguments.arguments"/>
+          </elementProp>
+        </ConfigTestElement>
+        <hashTree/>
+        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="Application availability" enabled="true">
+          <stringProp name="HTTPSampler.path">${__P(jmeterPath,/)}</stringProp>
+          <stringProp name="HTTPSampler.method">GET</stringProp>
+          <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+          <boolProp name="HTTPSampler.auto_redirects">false</boolProp>
+          <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          <boolProp name="HTTPSampler.DO_MULTIPART_POST">false</boolProp>
+        </HTTPSamplerProxy>
+        <hashTree>
+          <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion" testname="HTTP success response" enabled="true">
+            <collectionProp name="Asserion.test_strings">
+              <stringProp name="49586">200</stringProp>
+            </collectionProp>
+            <stringProp name="Assertion.custom_message">Expected HTTP 200 from application endpoint.</stringProp>
+            <stringProp name="Assertion.test_field">Assertion.response_code</stringProp>
+            <boolProp name="Assertion.assume_success">false</boolProp>
+            <intProp name="Assertion.test_type">8</intProp>
+          </ResponseAssertion>
+          <hashTree/>
+        </hashTree>
+      </hashTree>
+    </hashTree>
+  </hashTree>
+</jmeterTestPlan>
+""", encoding="utf-8")
+
+
+def _jmeter_row_value(row: Dict[str, Any], *keys: str) -> str:
+    lowered = {str(key).lower(): value for key, value in row.items()}
+    for key in keys:
+        value = lowered.get(key.lower())
+        if value is not None:
+            return str(value)
+    return ""
+
+
+def _jmeter_sampler_stats(label: str, rows: List[Dict[str, Any]], duration_seconds: float) -> Dict[str, Any]:
+    elapsed_values: List[int] = []
+    failures = 0
+    response_codes: Dict[str, int] = {}
+    bytes_received = 0
+    for row in rows:
+        elapsed = parse_int(_jmeter_row_value(row, "elapsed", "Elapsed"))
+        elapsed_values.append(elapsed)
+        success = _jmeter_row_value(row, "success", "Success").strip().lower() == "true"
+        code = _jmeter_row_value(row, "responseCode", "response_code", "ResponseCode") or "unknown"
+        response_codes[code] = response_codes.get(code, 0) + 1
+        bytes_received += parse_int(_jmeter_row_value(row, "bytes", "Bytes", "receivedBytes"))
+        if not success:
+            failures += 1
+    total = len(rows)
+    error_percent = round((failures / total) * 100, 2) if total else 0.0
+    average_ms = round(sum(elapsed_values) / total, 2) if total else 0.0
+    return {
+        "name": label,
+        "status": "PASSED" if failures == 0 else "FAILED",
+        "samples": total,
+        "failures": failures,
+        "errorPercent": error_percent,
+        "averageMs": average_ms,
+        "minMs": min(elapsed_values) if elapsed_values else 0,
+        "p90Ms": _jmeter_percentile(elapsed_values, 90),
+        "p95Ms": _jmeter_percentile(elapsed_values, 95),
+        "p99Ms": _jmeter_percentile(elapsed_values, 99),
+        "maxMs": max(elapsed_values) if elapsed_values else 0,
+        "throughputPerSecond": round(total / duration_seconds, 2) if duration_seconds > 0 else 0.0,
+        "responseCodes": response_codes,
+        "bytesReceived": bytes_received,
+    }
+
+
+def _jmeter_parse_results(jtl: Path) -> Dict[str, Any]:
+    if not jtl.exists():
+        return {"samples": 0, "samplers": [], "responseCodes": {}, "message": "JMeter results.jtl was not produced."}
+    try:
+        rows = list(csv.DictReader(jtl.open(encoding="utf-8")))
+    except OSError:
+        rows = []
+    rows = [row for row in rows if any(str(value or "").strip() for value in row.values())]
+    if not rows:
+        return {"samples": 0, "samplers": [], "responseCodes": {}, "message": "JMeter produced no samples."}
+
+    elapsed_values: List[int] = []
+    timestamps: List[int] = []
+    failures = 0
+    response_codes: Dict[str, int] = {}
+    sampler_rows: Dict[str, List[Dict[str, Any]]] = {}
+    bytes_received = 0
+    for row in rows:
+        elapsed = parse_int(_jmeter_row_value(row, "elapsed", "Elapsed"))
+        elapsed_values.append(elapsed)
+        timestamp = parse_int(_jmeter_row_value(row, "timeStamp", "timestamp", "Timestamp"))
+        if timestamp:
+            timestamps.append(timestamp)
+            timestamps.append(timestamp + elapsed)
+        success = _jmeter_row_value(row, "success", "Success").strip().lower() == "true"
+        if not success:
+            failures += 1
+        code = _jmeter_row_value(row, "responseCode", "response_code", "ResponseCode") or "unknown"
+        response_codes[code] = response_codes.get(code, 0) + 1
+        label = _jmeter_row_value(row, "label", "Label") or "JMeter sampler"
+        sampler_rows.setdefault(label, []).append(row)
+        bytes_received += parse_int(_jmeter_row_value(row, "bytes", "Bytes", "receivedBytes"))
+
+    total = len(rows)
+    duration_seconds = round((max(timestamps) - min(timestamps)) / 1000, 3) if len(timestamps) >= 2 else 0.0
+    if duration_seconds <= 0 and elapsed_values:
+        duration_seconds = round(sum(elapsed_values) / 1000, 3)
+    samplers = [
+        _jmeter_sampler_stats(label, grouped_rows, duration_seconds)
+        for label, grouped_rows in sorted(sampler_rows.items())
+    ]
+    error_percent = round((failures / total) * 100, 2) if total else 0.0
+    average_ms = round(sum(elapsed_values) / total, 2) if total else 0.0
+    return {
+        "samples": total,
+        "failures": failures,
+        "errorPercent": error_percent,
+        "averageMs": average_ms,
+        "minMs": min(elapsed_values) if elapsed_values else 0,
+        "p90Ms": _jmeter_percentile(elapsed_values, 90),
+        "p95Ms": _jmeter_percentile(elapsed_values, 95),
+        "p99Ms": _jmeter_percentile(elapsed_values, 99),
+        "maxMs": max(elapsed_values) if elapsed_values else 0,
+        "durationSeconds": duration_seconds,
+        "throughputPerSecond": round(total / duration_seconds, 2) if duration_seconds > 0 else 0.0,
+        "responseCodes": response_codes,
+        "samplers": samplers,
+        "bytesReceived": bytes_received,
+    }
+
+
 def execute_quality_performance(action: Dict[str, Any], context: Dict[str, Any]) -> None:
     source_dir = get_source_dir(context)
     report_dir = action_report_dir(action, context, "jmeter")
-    test_plan = action.get("testPlan") or "tests/performance/test.jmx"
-    if not (source_dir / test_plan).exists():
-        raise HTTPException(status_code=422, detail=f"Performance test plan not found: {test_plan}")
     base_url = normalize_http_url(action.get("baseUrl"))
-    parsed = urlparse(base_url)
+    test_plan = ""
+    for candidate in _jmeter_plan_candidates(action):
+        if (source_dir / candidate).exists():
+            test_plan = candidate
+            break
+    generated_smoke_plan = False
+    if test_plan:
+        test_plan_arg = test_plan
+        test_plan_path = source_dir / test_plan
+    else:
+        if not base_url:
+            raise HTTPException(status_code=422, detail="JMeter requires JMETER_BASE_URL, TARGET_APP_URL, API_BASE_URL, or a repository JMX plan.")
+        generated_smoke_plan = True
+        test_plan_path = report_dir / "generated-performance-smoke.jmx"
+        _jmeter_generate_smoke_plan(test_plan_path)
+        test_plan_arg = str(test_plan_path)
+
+    parsed = urlparse(base_url) if base_url else urlparse("http://localhost/")
+    protocol = parsed.scheme or "http"
+    host = parsed.hostname or "localhost"
+    port = str(parsed.port or (443 if protocol == "https" else 80))
+    path = parsed.path or "/"
+    if parsed.query:
+        path = f"{path}?{parsed.query}"
     jtl = report_dir / "results.jtl"
+    jmeter_log = report_dir / "jmeter.log"
     html_dir = report_dir / "html"
+    runtime_props = report_dir / "jmeter-runtime.properties"
+    threads = parse_int(action.get("threads"), 10)
+    ramp_seconds = parse_int(action.get("rampSeconds"), 30)
+    loops = parse_int(action.get("loops"), 5)
+    max_error = parse_float(action.get("maxErrorPercent"), 1.0)
+    max_avg = parse_float(action.get("maxAvgMs"), 2000.0)
+    max_p95 = parse_float(action.get("maxP95Ms"), 5000.0)
+    runtime_props.write_text(
+        "\n".join([
+            f"protocol={protocol}",
+            f"host={host}",
+            f"port={port}",
+            f"base_path={path}",
+            f"jmeterProtocol={protocol}",
+            f"jmeterHost={host}",
+            f"jmeterPort={port}",
+            f"jmeterPath={path}",
+            f"jmeterThreads={threads}",
+            f"jmeterRampSeconds={ramp_seconds}",
+            f"jmeterLoops={loops}",
+            "",
+        ]),
+        encoding="utf-8",
+    )
+    if html_dir.exists():
+        shutil.rmtree(html_dir)
     cmd = [
-        "jmeter", "-n", "-t", test_plan,
-        f"-Jprotocol={parsed.scheme or 'http'}",
-        f"-Jhost={parsed.hostname or base_url}",
-        f"-Jport={parsed.port or (443 if parsed.scheme == 'https' else 80)}",
-        f"-Jbase_path={parsed.path or '/'}",
-        f"-Jthreads={action.get('threads') or 10}",
-        f"-JrampSeconds={action.get('rampSeconds') or 30}",
-        f"-Jloops={action.get('loops') or 5}",
-        "-l", str(jtl), "-e", "-o", str(html_dir),
+        "jmeter", "-n", "-t", test_plan_arg,
+        "-l", str(jtl),
+        "-j", str(jmeter_log),
+        "-e", "-o", str(html_dir),
+        "-q", str(runtime_props),
+        f"-Jprotocol={protocol}",
+        f"-Jhost={host}",
+        f"-Jport={port}",
+        f"-Jbase_path={path}",
+        f"-JjmeterProtocol={protocol}",
+        f"-JjmeterHost={host}",
+        f"-JjmeterPort={port}",
+        f"-JjmeterPath={path}",
+        f"-Jthreads={threads}",
+        f"-JrampSeconds={ramp_seconds}",
+        f"-Jloops={loops}",
+        f"-JjmeterThreads={threads}",
+        f"-JjmeterRampSeconds={ramp_seconds}",
+        f"-JjmeterLoops={loops}",
+        "-Jjmeter.save.saveservice.output_format=csv",
+        "-Jjmeter.save.saveservice.print_field_names=true",
+        "-Jjmeter.save.saveservice.timestamp_format=ms",
+        "-Jjmeter.save.saveservice.successful=true",
+        "-Jjmeter.save.saveservice.elapsed=true",
+        "-Jjmeter.save.saveservice.label=true",
+        "-Jjmeter.save.saveservice.response_code=true",
+        "-Jjmeter.save.saveservice.response_message=true",
+        "-Jjmeter.save.saveservice.bytes=true",
+        "-Jjmeter.save.saveservice.thread_counts=true",
     ]
+    (report_dir / "jmeter-command.txt").write_text(shlex.join(cmd) + "\n", encoding="utf-8")
     result = run_command(cmd, cwd=source_dir, check=False)
-    response_times: List[int] = []
-    failures = 0
-    total = 0
-    if jtl.exists():
-        for line in jtl.read_text(errors="ignore").splitlines()[1:]:
-            parts = line.split(",")
-            if len(parts) >= 8:
-                total += 1
-                try:
-                    response_times.append(int(parts[1]))
-                except ValueError:
-                    pass
-                if parts[7].lower() != "true":
-                    failures += 1
-    response_times_sorted = sorted(response_times)
-    p95 = response_times_sorted[int(len(response_times_sorted) * 0.95) - 1] if response_times_sorted else 0
-    avg_ms = int(mean(response_times)) if response_times else 0
-    error_pct = (failures / total * 100) if total else 0
-    max_error = float(action.get("maxErrorPercent") or 1)
-    max_avg = int(action.get("maxAvgMs") or 2000)
-    max_p95 = int(action.get("maxP95Ms") or 5000)
-    passed = result.returncode == 0 and error_pct <= max_error and avg_ms <= max_avg and p95 <= max_p95
-    write_json(report_dir / "summary.json", {
+    output_tail = command_output_tail(result)
+    parsed_results = _jmeter_parse_results(jtl)
+    failed_thresholds: List[str] = []
+    if result.returncode != 0:
+        failed_thresholds.append(f"JMeter exited with code {result.returncode}.")
+    if parsed_results.get("samples", 0) == 0:
+        failed_thresholds.append(str(parsed_results.get("message") or "JMeter produced no samples."))
+    if parsed_results.get("errorPercent", 0.0) > max_error:
+        failed_thresholds.append(f"Error percent {parsed_results.get('errorPercent')} exceeded threshold {max_error}.")
+    if parsed_results.get("averageMs", 0.0) > max_avg:
+        failed_thresholds.append(f"Average response {parsed_results.get('averageMs')}ms exceeded threshold {max_avg}ms.")
+    if parsed_results.get("p95Ms", 0) > max_p95:
+        failed_thresholds.append(f"P95 response {parsed_results.get('p95Ms')}ms exceeded threshold {max_p95}ms.")
+    passed = not failed_thresholds
+    artifacts = report_artifacts(report_dir, context)
+    summary = {
+        "tool": "jmeter",
+        "toolName": "Performance Test",
+        "framework": "jmeter",
+        "stage": "performance-test",
         "status": "PASSED" if passed else "FAILED",
         "baseUrl": base_url,
-        "samples": total,
-        "failures": failures,
-        "errorPercent": round(error_pct, 2),
-        "averageMs": avg_ms,
-        "p95Ms": p95,
+        "testPlan": test_plan_arg,
+        "testPlanSource": "generated-smoke" if generated_smoke_plan else "repository",
+        "generatedSmokePlan": generated_smoke_plan,
+        "command": shlex.join(cmd),
+        "exitCode": result.returncode,
+        "requestId": context["requestId"],
+        "project": context.get("project", {}),
+        "git": context.get("git", {}),
+        "runner": context.get("runner", {}),
+        "reportDir": relative_path(report_dir, context["runDir"]),
+        "threads": threads,
+        "rampSeconds": ramp_seconds,
+        "loops": loops,
+        "samples": parsed_results.get("samples", 0),
+        "totalSamples": parsed_results.get("samples", 0),
+        "failures": parsed_results.get("failures", 0),
+        "failedSamples": parsed_results.get("failures", 0),
+        "totalTests": parsed_results.get("samples", 0),
+        "passedTests": max(parsed_results.get("samples", 0) - parsed_results.get("failures", 0), 0),
+        "failedTests": parsed_results.get("failures", 0),
+        "errorTests": 0,
+        "skippedTests": 0,
+        "errorPercent": parsed_results.get("errorPercent", 0.0),
+        "averageMs": parsed_results.get("averageMs", 0.0),
+        "averageResponseMs": parsed_results.get("averageMs", 0.0),
+        "minResponseMs": parsed_results.get("minMs", 0),
+        "p90ResponseMs": parsed_results.get("p90Ms", 0),
+        "p95Ms": parsed_results.get("p95Ms", 0),
+        "p95ResponseMs": parsed_results.get("p95Ms", 0),
+        "p99ResponseMs": parsed_results.get("p99Ms", 0),
+        "maxResponseMs": parsed_results.get("maxMs", 0),
+        "durationSeconds": parsed_results.get("durationSeconds", 0),
+        "throughputPerSecond": parsed_results.get("throughputPerSecond", 0.0),
+        "responseCodes": parsed_results.get("responseCodes", {}),
+        "samplers": parsed_results.get("samplers", []),
+        "bytesReceived": parsed_results.get("bytesReceived", 0),
         "thresholds": {"maxErrorPercent": max_error, "maxAvgMs": max_avg, "maxP95Ms": max_p95},
+        "failedThresholds": failed_thresholds,
+        "artifacts": artifacts,
+    }
+    if output_tail:
+        summary["outputTail"] = output_tail
+    write_json(report_dir / "summary.json", summary)
+    write_json(report_dir / "evidence.json", {
+        **summary,
+        "generatedAt": utc_now().isoformat(),
+        "evidenceType": "validation.performance",
     })
+    print_quality_summary(summary)
     if not passed:
-        raise HTTPException(status_code=500, detail="Performance test failed")
+        raise HTTPException(status_code=500, detail={
+            "message": "Performance test failed",
+            "failedThresholds": failed_thresholds,
+            "testPlan": test_plan_arg,
+            "baseUrl": base_url,
+            "exitCode": result.returncode,
+            "reportDir": str(report_dir.relative_to(context["runDir"])),
+            "outputTail": output_tail,
+        })
+
+
+def _sonar_sanitize_key(value: Any) -> str:
+    key = re.sub(r"[^A-Za-z0-9_.:-]+", "-", str(value or "application").strip().lower()).strip("-")
+    return key or "application"
+
+
+def _sonar_project_type(action: Dict[str, Any], context: Dict[str, Any]) -> str:
+    payload = context.get("requestPayload") or {}
+    return str(action.get("projectType") or payload.get("PROJECT_TYPE") or "").strip().lower()
+
+
+def _sonar_existing_paths(source_dir: Path, candidates: List[str]) -> str:
+    return ",".join(candidate for candidate in candidates if (source_dir / candidate).exists())
+
+
+def _sonar_read_project_key(properties_path: Path) -> str:
+    if not properties_path.exists():
+        return ""
+    for line in properties_path.read_text(errors="ignore").splitlines():
+        if line.strip().startswith("sonar.projectKey="):
+            return line.split("=", 1)[1].strip()
+    return ""
+
+
+def _sonar_generate_project_properties(source_dir: Path, action: Dict[str, Any], context: Dict[str, Any]) -> str:
+    props = source_dir / "sonar-project.properties"
+    existing_key = _sonar_read_project_key(props)
+    if existing_key:
+        return existing_key
+
+    payload = context.get("requestPayload") or {}
+    project_name = str(action.get("projectName") or payload.get("PROJECT_NAME") or context.get("project", {}).get("name") or context["requestId"]).strip()
+    project_key = _sonar_sanitize_key(action.get("projectKey") or payload.get("SONAR_PROJECT_KEY") or project_name)
+    project_type = _sonar_project_type(action, context)
+    lines = [
+        f"sonar.projectKey={project_key}",
+        f"sonar.projectName={project_name or project_key}",
+        "sonar.sourceEncoding=UTF-8",
+        "sonar.scm.provider=git",
+    ]
+
+    if project_type in {"angular", "nodejs", "webcomponent"}:
+        sources = _sonar_existing_paths(source_dir, ["src", "server"]) or "."
+        tests = _sonar_existing_paths(source_dir, ["src", "tests"])
+        lines.extend([
+            f"sonar.sources={sources}",
+            "sonar.exclusions=**/node_modules/**,**/dist/**,**/build/**,**/coverage/**,**/*.spec.ts,**/*.spec.js,**/*.test.ts,**/*.test.js",
+            "sonar.test.inclusions=**/*.spec.ts,**/*.spec.js,**/*.test.ts,**/*.test.js,tests/**/*.js,tests/**/*.ts",
+            "sonar.javascript.lcov.reportPaths=coverage/lcov.info,coverage/**/lcov.info",
+        ])
+        if tests:
+            lines.append(f"sonar.tests={tests}")
+    elif project_type in {"springboot", "springboot-java11", "java"}:
+        java_sources = _sonar_existing_paths(source_dir, ["src/main/java", "src/main/kotlin"]) or "src/main/java"
+        java_tests = _sonar_existing_paths(source_dir, ["src/test/java", "src/test/kotlin"])
+        java_binaries = _sonar_existing_paths(source_dir, ["target/classes", "build/classes/java/main", "build/classes/kotlin/main"]) or "target/classes"
+        junit_reports = _sonar_existing_paths(source_dir, ["target/surefire-reports", "build/test-results/test"])
+        jacoco_reports = _sonar_existing_paths(source_dir, ["target/site/jacoco/jacoco.xml", "build/reports/jacoco/test/jacocoTestReport.xml"])
+        lines.extend([
+            f"sonar.sources={java_sources}",
+            f"sonar.java.binaries={java_binaries}",
+            f"sonar.coverage.jacoco.xmlReportPaths={jacoco_reports or 'target/site/jacoco/jacoco.xml'}",
+        ])
+        if java_tests:
+            lines.append(f"sonar.tests={java_tests}")
+        if junit_reports:
+            lines.append(f"sonar.junit.reportPaths={junit_reports}")
+    else:
+        lines.extend([
+            "sonar.sources=.",
+            "sonar.exclusions=**/.git/**,**/node_modules/**,**/dist/**,**/build/**,**/target/**,**/coverage/**",
+        ])
+
+    props.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return project_key
+
+
+def _sonar_run_coverage(source_dir: Path, action: Dict[str, Any], context: Dict[str, Any]) -> List[Dict[str, Any]]:
+    project_type = _sonar_project_type(action, context)
+    coverage_steps: List[Dict[str, Any]] = []
+    if as_bool(action.get("skipCoverage"), False):
+        return [{"name": "coverage", "status": "SKIPPED", "message": "Coverage preparation was disabled for this scan."}]
+    if project_type in {"angular", "nodejs", "webcomponent"}:
+        package_json = source_dir / "package.json"
+        if not package_json.exists():
+            return [{"name": "javascript-coverage", "status": "SKIPPED", "message": "package.json not found."}]
+        install_cmd = ["npm", "ci"] if (source_dir / "package-lock.json").exists() else ["npm", "install"]
+        install = run_command(install_cmd, cwd=source_dir, check=False)
+        coverage_steps.append({"name": "npm-install", "status": "PASSED" if install.returncode == 0 else "FAILED", "exitCode": install.returncode})
+        if install.returncode != 0:
+            coverage_steps[-1]["outputTail"] = command_output_tail(install)
+            return coverage_steps
+        try:
+            package = json.loads(package_json.read_text())
+        except json.JSONDecodeError:
+            package = {}
+        scripts = package.get("scripts") or {}
+        if "test:coverage" in scripts:
+            test_cmd = ["npm", "run", "test:coverage"]
+        elif "test" in scripts:
+            test_cmd = ["npm", "test", "--", "--watch=false", "--browsers=ChromeHeadless", "--code-coverage"]
+        else:
+            coverage_steps.append({"name": "javascript-coverage", "status": "SKIPPED", "message": "No npm test script found."})
+            return coverage_steps
+        test = run_command(test_cmd, cwd=source_dir, check=False)
+        coverage_steps.append({"name": "javascript-coverage", "status": "PASSED" if test.returncode == 0 else "FAILED", "exitCode": test.returncode})
+        if test.returncode != 0:
+            coverage_steps[-1]["outputTail"] = command_output_tail(test)
+    elif project_type in {"springboot", "springboot-java11", "java"}:
+        if (source_dir / "mvnw").exists():
+            run_command(["chmod", "+x", "mvnw"], cwd=source_dir, check=False)
+            cmd = ["./mvnw", "-B", "clean", "verify"]
+        elif (source_dir / "pom.xml").exists():
+            cmd = ["mvn", "-B", "clean", "verify"]
+        elif (source_dir / "gradlew").exists():
+            run_command(["chmod", "+x", "gradlew"], cwd=source_dir, check=False)
+            cmd = ["./gradlew", "clean", "test", "jacocoTestReport"]
+        elif (source_dir / "build.gradle").exists() or (source_dir / "build.gradle.kts").exists():
+            cmd = ["gradle", "clean", "test", "jacocoTestReport"]
+        else:
+            return [{"name": "java-coverage", "status": "SKIPPED", "message": "No Maven or Gradle build file found."}]
+        result = run_command(cmd, cwd=source_dir, check=False)
+        coverage_steps.append({"name": "java-coverage", "status": "PASSED" if result.returncode == 0 else "FAILED", "exitCode": result.returncode})
+        if result.returncode != 0:
+            coverage_steps[-1]["outputTail"] = command_output_tail(result)
+    else:
+        coverage_steps.append({"name": "coverage", "status": "SKIPPED", "message": f"No coverage preparation rule for project type '{project_type}'."})
+    return coverage_steps
+
+
+def _sonar_parse_report_task(source_dir: Path) -> Dict[str, str]:
+    task_path = source_dir / ".scannerwork" / "report-task.txt"
+    values: Dict[str, str] = {}
+    if not task_path.exists():
+        return values
+    for line in task_path.read_text(errors="ignore").splitlines():
+        if "=" in line:
+            key, value = line.split("=", 1)
+            values[key.strip()] = value.strip()
+    return values
+
+
+def _sonar_get_json(host_url: str, path: str, token: str = "", params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    url = host_url.rstrip("/") + path
+    auth = (token, "") if token else None
+    response = requests.get(url, params=params or {}, auth=auth, timeout=30)
+    response.raise_for_status()
+    return response.json()
+
+
+def _sonar_wait_for_quality_gate(host_url: str, token: str, ce_task_id: str, timeout_seconds: int = 600) -> Dict[str, Any]:
+    deadline = time.time() + timeout_seconds
+    last_task: Dict[str, Any] = {}
+    while time.time() < deadline:
+        last_task = _sonar_get_json(host_url, "/api/ce/task", token, {"id": ce_task_id})
+        task = last_task.get("task") or {}
+        status = str(task.get("status") or "").upper()
+        if status == "SUCCESS":
+            analysis_id = task.get("analysisId") or ""
+            if not analysis_id:
+                raise RuntimeError("Sonar Compute Engine task succeeded but did not return analysisId.")
+            quality_gate = _sonar_get_json(host_url, "/api/qualitygates/project_status", token, {"analysisId": analysis_id})
+            return {"ceTask": last_task, "analysisId": analysis_id, "qualityGate": quality_gate}
+        if status in {"FAILED", "CANCELED"}:
+            raise RuntimeError(f"Sonar Compute Engine task ended with status {status}.")
+        time.sleep(10)
+    raise RuntimeError("Timed out waiting for Sonar Compute Engine task to finish.")
+
+
+def _sonar_collect_measures(host_url: str, token: str, project_key: str) -> Dict[str, Any]:
+    metric_keys = "ncloc,bugs,vulnerabilities,code_smells,coverage,duplicated_lines_density,security_hotspots,reliability_rating,security_rating,sqale_rating"
+    try:
+        data = _sonar_get_json(host_url, "/api/measures/component", token, {"component": project_key, "metricKeys": metric_keys})
+    except requests.RequestException as exc:
+        return {"collectionError": str(exc)}
+    measures: Dict[str, Any] = {}
+    for item in ((data.get("component") or {}).get("measures") or []):
+        measures[str(item.get("metric"))] = item.get("value")
+    return measures
+
+
+def _sonar_collect_issues(host_url: str, token: str, project_key: str) -> Dict[str, Any]:
+    try:
+        data = _sonar_get_json(host_url, "/api/issues/search", token, {"componentKeys": project_key, "resolved": "false", "ps": 100})
+    except requests.RequestException as exc:
+        return {"total": 0, "issues": [], "collectionError": str(exc)}
+    issues = []
+    for issue in data.get("issues") or []:
+        issues.append({
+            "key": issue.get("key"),
+            "rule": issue.get("rule"),
+            "severity": issue.get("severity"),
+            "type": issue.get("type"),
+            "component": issue.get("component"),
+            "line": issue.get("line"),
+            "message": issue.get("message"),
+        })
+    return {"total": data.get("total", len(issues)), "issues": issues}
 
 
 def execute_quality_code(action: Dict[str, Any], context: Dict[str, Any]) -> None:
@@ -1445,22 +2085,665 @@ def execute_quality_code(action: Dict[str, Any], context: Dict[str, Any]) -> Non
                 lines += len(path.read_text(errors="ignore").splitlines())
             except OSError:
                 pass
-    sonar_status = "NOT_CONFIGURED"
-    if (source_dir / "sonar-project.properties").exists() and shutil.which("sonar-scanner") and os.getenv("SONAR_HOST_URL"):
-        cmd = ["sonar-scanner", "-Dproject.settings=sonar-project.properties", f"-Dsonar.host.url={os.getenv('SONAR_HOST_URL')}"]
-        if os.getenv("SONAR_TOKEN"):
-            cmd.append(f"-Dsonar.token={os.getenv('SONAR_TOKEN')}")
-        sonar = run_command(cmd, cwd=source_dir, check=False)
-        sonar_status = "PASSED" if sonar.returncode == 0 else "FAILED"
-    write_json(report_dir / "summary.json", {
-        "status": "PASSED" if sonar_status != "FAILED" else "FAILED",
-        "mode": "SONAR_SCANNER" if sonar_status != "NOT_CONFIGURED" else "LOCAL_CODE_QUALITY",
+    required = as_bool(action.get("required"), True)
+    host_url = normalize_http_url(action.get("hostUrl") or os.getenv("SONAR_HOST_URL") or os.getenv("HORIZON_SONAR_HOST_URL"))
+    token = str(action.get("token") or os.getenv("SONAR_TOKEN") or "").strip()
+    scanner = shutil.which("sonar-scanner")
+    missing = []
+    if not host_url:
+        missing.append("SONAR_HOST_URL is not configured for the runner.")
+    if not scanner:
+        missing.append("sonar-scanner CLI is not installed in the runner image.")
+    if not token:
+        missing.append("SONAR_TOKEN is not configured. Use a project/service token, not a human password.")
+
+    project_key = action.get("projectKey") or _sonar_sanitize_key((context.get("requestPayload") or {}).get("PROJECT_NAME") or context.get("project", {}).get("name"))
+    summary: Dict[str, Any] = {
+        "tool": "sonarqube",
+        "toolName": "Code Quality Scan",
+        "framework": "sonarqube",
+        "stage": "code-quality",
+        "mode": "SONAR_SCANNER" if not missing else "LOCAL_CODE_QUALITY",
+        "status": "FAILED" if missing and required else "PASSED",
+        "sonarStatus": "NOT_CONFIGURED" if missing else "PENDING",
+        "qualityGateStatus": "NOT_RUN" if missing else "PENDING",
+        "projectKey": project_key,
+        "projectType": _sonar_project_type(action, context),
+        "sonarUrl": host_url,
         "sourceFiles": len(source_files),
         "linesOfCode": lines,
-        "sonarStatus": sonar_status,
+        "missingConfiguration": missing,
+        "requestId": context["requestId"],
+        "project": context.get("project", {}),
+        "git": context.get("git", {}),
+        "runner": context.get("runner", {}),
+        "reportDir": relative_path(report_dir, context["runDir"]),
+        "totalTests": 0,
+        "passedTests": 0,
+        "failedTests": 0,
+        "errorTests": 0,
+        "skippedTests": 0,
+    }
+
+    if not missing:
+        project_key = _sonar_generate_project_properties(source_dir, action, context)
+        summary["projectKey"] = project_key
+        coverage_steps = _sonar_run_coverage(source_dir, action, context)
+        summary["coveragePreparation"] = coverage_steps
+        cmd = [
+            "sonar-scanner",
+            "-Dproject.settings=sonar-project.properties",
+            f"-Dsonar.host.url={host_url}",
+            f"-Dsonar.token={token}",
+        ]
+        redacted_cmd = cmd[:-1] + ["-Dsonar.token=***"]
+        (report_dir / "sonar-scanner-command.txt").write_text(shlex.join(redacted_cmd) + "\n", encoding="utf-8")
+        result = run_command(cmd, cwd=source_dir, check=False, display_args=redacted_cmd)
+        summary["command"] = shlex.join(redacted_cmd)
+        summary["exitCode"] = result.returncode
+        summary["sonarStatus"] = "PASSED" if result.returncode == 0 else "FAILED"
+        if result.returncode != 0:
+            summary["status"] = "FAILED"
+            summary["qualityGateStatus"] = "NOT_RUN"
+            summary["outputTail"] = command_output_tail(result)
+        else:
+            report_task = _sonar_parse_report_task(source_dir)
+            summary["ceTaskId"] = report_task.get("ceTaskId")
+            summary["dashboardUrl"] = report_task.get("dashboardUrl")
+            summary["serverUrl"] = report_task.get("serverUrl")
+            try:
+                gate_result = _sonar_wait_for_quality_gate(host_url, token, str(report_task.get("ceTaskId") or ""))
+                ce_task = gate_result.get("ceTask") or {}
+                quality_gate = gate_result.get("qualityGate") or {}
+                project_status = quality_gate.get("projectStatus") or {}
+                summary["analysisId"] = gate_result.get("analysisId")
+                summary["sonarStatus"] = "PASSED"
+                summary["qualityGateStatus"] = project_status.get("status") or "UNKNOWN"
+                summary["qualityGateConditions"] = project_status.get("conditions") or []
+                summary["ceTaskStatus"] = (ce_task.get("task") or {}).get("status")
+                summary["status"] = "PASSED" if summary["qualityGateStatus"] == "OK" else "FAILED"
+                write_json(report_dir / "sonar-ce-task.json", ce_task)
+                write_json(report_dir / "sonar-quality-gate.json", quality_gate)
+            except (requests.RequestException, RuntimeError) as exc:
+                summary["status"] = "FAILED"
+                summary["sonarStatus"] = "FAILED"
+                summary["qualityGateStatus"] = "UNKNOWN"
+                summary["qualityGateError"] = str(exc)
+            measures = _sonar_collect_measures(host_url, token, project_key)
+            issues_result = _sonar_collect_issues(host_url, token, project_key)
+            summary["measures"] = measures
+            summary["issueCount"] = issues_result.get("total", 0)
+            summary["issues"] = issues_result.get("issues", [])[:25]
+            if issues_result.get("collectionError"):
+                summary["issuesCollectionError"] = issues_result["collectionError"]
+            if measures.get("collectionError"):
+                summary["measuresCollectionError"] = measures["collectionError"]
+            write_json(report_dir / "issues.json", issues_result)
+            write_json(report_dir / "measures.json", measures)
+
+    for source_name, target_name in [
+        ("sonar-project.properties", "sonar-project.properties"),
+        (".scannerwork/report-task.txt", "report-task.txt"),
+    ]:
+        source = source_dir / source_name
+        if source.exists():
+            shutil.copy2(source, report_dir / target_name)
+    summary["artifacts"] = report_artifacts(report_dir, context)
+    write_json(report_dir / "summary.json", summary)
+    write_json(report_dir / "evidence.json", {
+        **summary,
+        "generatedAt": utc_now().isoformat(),
+        "evidenceType": "validation.code-quality",
     })
-    if sonar_status == "FAILED" and as_bool(action.get("required"), False):
-        raise HTTPException(status_code=500, detail="Code quality scan failed")
+    print_quality_summary(summary)
+    if summary["status"] == "FAILED" and required:
+        raise HTTPException(status_code=500, detail={
+            "message": "Code quality scan failed",
+            "sonarStatus": summary.get("sonarStatus"),
+            "qualityGateStatus": summary.get("qualityGateStatus"),
+            "missingConfiguration": missing,
+            "projectKey": summary.get("projectKey"),
+            "reportDir": str(report_dir.relative_to(context["runDir"])),
+        })
+
+
+SEVERITY_RANK = {"UNKNOWN": 0, "LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
+
+
+def normalize_security_severity(value: Any) -> str:
+    severity = str(value or "UNKNOWN").strip().upper()
+    if severity in {"ERROR"}:
+        return "HIGH"
+    if severity in {"WARNING", "WARN"}:
+        return "MEDIUM"
+    if severity in {"INFO", "INFORMATIONAL"}:
+        return "LOW"
+    return severity if severity in SEVERITY_RANK else "UNKNOWN"
+
+
+def security_risk_score(severity: Any) -> float:
+    return {
+        "CRITICAL": 10.0,
+        "HIGH": 7.5,
+        "MEDIUM": 5.0,
+        "LOW": 3.0,
+    }.get(normalize_security_severity(severity), 1.0)
+
+
+def security_thresholds(action: Dict[str, Any]) -> List[str]:
+    configured = (
+        action.get("failOnSeverity")
+        or action.get("failOnSeverities")
+        or action.get("blockingSeverities")
+        or config.security_fail_on_severity
+    )
+    return [normalize_security_severity(item) for item in csv_values(configured) if normalize_security_severity(item) in SEVERITY_RANK]
+
+
+def security_finding_id(rule_id: Any, target: Any, component: Any, line: Any, description: Any) -> str:
+    raw = "|".join(str(item or "") for item in [rule_id, target, component, line, description])
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def context_application(context: Dict[str, Any]) -> str:
+    payload = context.get("requestPayload") or {}
+    return str(payload.get("PROJECT_NAME") or context.get("project", {}).get("name") or context["requestId"])
+
+
+def context_requested_by(context: Dict[str, Any]) -> str:
+    payload = context.get("requestPayload") or {}
+    return str(payload.get("REQUESTED_BY") or payload.get("requestedBy") or "jenkins@horizonrelevance.com")
+
+
+def context_build_number(context: Dict[str, Any]) -> int:
+    payload = context.get("requestPayload") or {}
+    runner = context.get("runner") or {}
+    return parse_int(runner.get("buildNumber") or payload.get("BUILD_NUMBER") or payload.get("buildNumber") or 0)
+
+
+def context_jenkins_job(context: Dict[str, Any]) -> str:
+    payload = context.get("requestPayload") or {}
+    runner = context.get("runner") or {}
+    return str(runner.get("jobName") or payload.get("JOB_NAME") or payload.get("jobName") or context_application(context))
+
+
+def context_jenkins_url(context: Dict[str, Any]) -> str:
+    payload = context.get("requestPayload") or {}
+    runner = context.get("runner") or {}
+    return str(runner.get("buildUrl") or payload.get("BUILD_URL") or payload.get("buildUrl") or "")
+
+
+def ensure_dashboard_finding_metadata(finding: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+    enriched = dict(finding)
+    enriched["jenkins_job"] = str(enriched.get("jenkins_job") or context_jenkins_job(context))
+    enriched["build_number"] = parse_int(enriched.get("build_number") or context_build_number(context))
+    enriched["jenkins_url"] = str(enriched.get("jenkins_url") or context_jenkins_url(context))
+    return enriched
+
+
+def make_security_finding(
+    context: Dict[str, Any],
+    *,
+    target: Any,
+    package_name: Any,
+    installed_version: Any = "N/A",
+    vulnerability_id: Any,
+    severity: Any,
+    fixed_version: Any = None,
+    description: Any = "",
+    source: Any = "Security Finding",
+    line: Any = None,
+    rule: Any = None,
+    status: Any = "Open",
+    predicted_severity: Any = None,
+) -> Dict[str, Any]:
+    normalized = normalize_security_severity(severity)
+    vuln_id = str(vulnerability_id or rule or "SECURITY-FINDING")
+    return {
+        "target": str(target or "repository"),
+        "package_name": str(package_name or "Application"),
+        "installed_version": str(installed_version or "N/A"),
+        "vulnerability_id": vuln_id,
+        "severity": normalized,
+        "fixed_version": str(fixed_version or "Review and remediate this finding."),
+        "risk_score": security_risk_score(normalized),
+        "description": str(description or vuln_id),
+        "source": str(source or "Security Finding"),
+        "timestamp": utc_now().isoformat(),
+        "line": parse_int(line, 0) or None,
+        "rule": str(rule or vuln_id),
+        "status": str(status or "Open"),
+        "predictedSeverity": normalize_security_severity(predicted_severity or normalized),
+        "jenkins_job": context_jenkins_job(context),
+        "build_number": context_build_number(context),
+        "jenkins_url": context_jenkins_url(context),
+    }
+
+
+def count_by_severity(findings: List[Dict[str, Any]]) -> Dict[str, int]:
+    counts = {severity: 0 for severity in ["CRITICAL", "HIGH", "MEDIUM", "LOW", "UNKNOWN"]}
+    for finding in findings:
+        severity = normalize_security_severity(finding.get("severity"))
+        counts[severity] = counts.get(severity, 0) + 1
+    return counts
+
+
+def blocking_findings(findings: List[Dict[str, Any]], thresholds: List[str]) -> List[Dict[str, Any]]:
+    ranks = [SEVERITY_RANK[item] for item in thresholds if item in SEVERITY_RANK]
+    if not ranks:
+        return []
+    minimum = min(ranks)
+    return [finding for finding in findings if SEVERITY_RANK.get(normalize_security_severity(finding.get("severity")), 0) >= minimum]
+
+
+def write_command_audit(path: Path, args: List[str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(shlex.join(args) + "\n", encoding="utf-8")
+
+
+def upload_security_findings(report_dir: Path, action: Dict[str, Any], context: Dict[str, Any], findings: List[Dict[str, Any]]) -> Dict[str, Any]:
+    endpoint = normalize_http_url(action.get("findingsUploadUrl") or action.get("dashboardUploadUrl") or config.findings_upload_url)
+    enriched_findings = [ensure_dashboard_finding_metadata(finding, context) for finding in findings]
+    payload = {
+        "application": context_application(context),
+        "requestedBy": context_requested_by(context),
+        "repo_url": (context.get("git") or {}).get("repoUrl") or "",
+        "jenkins_url": context_jenkins_url(context),
+        "jenkins_job": context_jenkins_job(context),
+        "build_number": context_build_number(context),
+        "vulnerabilities": enriched_findings,
+    }
+    write_json(report_dir / "dashboard-upload.json", payload)
+    if not endpoint:
+        result = {"status": "SKIPPED", "endpoint": "", "count": len(enriched_findings), "reason": "HORIZON_FINDINGS_UPLOAD_URL is not configured"}
+        write_json(report_dir / "dashboard-upload-summary.json", result)
+        return result
+    headers = {"Content-Type": "application/json"}
+    token = str(action.get("findingsUploadToken") or config.findings_upload_token or "").strip()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    try:
+        response = requests.post(endpoint, json=payload, headers=headers, timeout=30)
+        result = {
+            "status": "UPLOADED" if response.status_code < 400 else "FAILED",
+            "endpoint": endpoint,
+            "count": len(enriched_findings),
+            "httpStatus": response.status_code,
+            "response": response.text[:2000],
+        }
+    except requests.RequestException as exc:
+        result = {"status": "FAILED", "endpoint": endpoint, "count": len(enriched_findings), "error": str(exc)}
+    write_json(report_dir / "dashboard-upload-summary.json", result)
+    if result["status"] == "FAILED" and as_bool(action.get("failOnDashboardUpload"), config.security_fail_on_dashboard_upload):
+        raise HTTPException(status_code=502, detail=f"Security findings dashboard upload failed: {result}")
+    return result
+
+
+def finalize_security_report(
+    report_dir: Path,
+    action: Dict[str, Any],
+    context: Dict[str, Any],
+    *,
+    tool: str,
+    tool_name: str,
+    stage: str,
+    tools: List[str],
+    findings: List[Dict[str, Any]],
+    extra: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    thresholds = security_thresholds(action)
+    blocking = blocking_findings(findings, thresholds)
+    counts = count_by_severity(findings)
+    upload = upload_security_findings(report_dir, action, context, findings)
+    failed_thresholds = []
+    if blocking:
+        failed_thresholds.append(
+            f"{len(blocking)} findings met blocking severity threshold: {','.join(thresholds) or 'none'}"
+        )
+    summary = {
+        "tool": tool,
+        "toolName": tool_name,
+        "stage": stage,
+        "status": "FAILED" if blocking and as_bool(action.get("failOnFindings"), True) else ("COMPLETED_WITH_FINDINGS" if findings else "PASSED"),
+        "findingCount": len(findings),
+        "findingCounts": counts,
+        "blockingFindings": len(blocking),
+        "blockingSeverities": thresholds,
+        "failedThresholds": failed_thresholds,
+        "dashboardUpload": upload,
+        "tools": sorted(set(tools)),
+        "sampleFindings": findings[:25],
+        "requestId": context["requestId"],
+        "project": context.get("project", {}),
+        "git": context.get("git", {}),
+        "runner": context.get("runner", {}),
+        "artifacts": report_artifacts(report_dir, context),
+    }
+    if extra:
+        summary.update(extra)
+    write_json(report_dir / "normalized-findings.json", findings)
+    write_json(report_dir / "summary.json", summary)
+    write_json(report_dir / "evidence.json", {
+        **summary,
+        "generatedAt": utc_now().isoformat(),
+        "evidenceType": f"validation.{stage}",
+    })
+    print_quality_summary(summary)
+    if blocking and as_bool(action.get("failOnFindings"), True):
+        raise HTTPException(status_code=500, detail={
+            "message": f"{tool_name} failed severity threshold",
+            "blockingFindings": len(blocking),
+            "blockingSeverities": thresholds,
+            "reportDir": relative_path(report_dir, context["runDir"]),
+        })
+    return summary
+
+
+def trivy_source_for_result(result: Dict[str, Any], default_source: str) -> str:
+    target = str(result.get("Target") or "").lower()
+    result_class = str(result.get("Class") or "").lower()
+    result_type = str(result.get("Type") or "").lower()
+    dependency_markers = (
+        "package-lock.json", "package.json", "yarn.lock", "pnpm-lock.yaml", "pom.xml",
+        "build.gradle", "requirements.txt", "poetry.lock", "pipfile.lock", "go.mod",
+        "composer.lock", "gemfile.lock",
+    )
+    if result_class == "os-pkgs" or any(marker in target for marker in ("alpine", "debian", "ubuntu", "amazon", "redhat", "wolfi", "oracle")):
+        return "Container Vulnerability"
+    if result_class == "lang-pkgs" or result_type in {"npm", "node-pkg", "jar", "pom", "python-pkg", "gobinary"} or any(marker in target for marker in dependency_markers):
+        return "Dependency Vulnerability"
+    return default_source
+
+
+def parse_trivy_report(path: Path, context: Dict[str, Any], default_source: str) -> List[Dict[str, Any]]:
+    if not path.exists():
+        return []
+    try:
+        doc = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return []
+    findings: List[Dict[str, Any]] = []
+    for result in doc.get("Results", []) or []:
+        target = result.get("Target") or "repository"
+        source = trivy_source_for_result(result, default_source)
+        for vuln in result.get("Vulnerabilities") or []:
+            fixed = vuln.get("FixedVersion") or "Upgrade to a fixed version when available; otherwise apply vendor mitigation or accept risk formally."
+            findings.append(make_security_finding(
+                context,
+                target=target,
+                package_name=vuln.get("PkgName") or "Package",
+                installed_version=vuln.get("InstalledVersion") or "N/A",
+                vulnerability_id=vuln.get("VulnerabilityID") or "VULNERABILITY",
+                severity=vuln.get("Severity"),
+                fixed_version=fixed,
+                description=" - ".join(item for item in [vuln.get("Title"), vuln.get("Description")] if item),
+                source=source,
+                rule=vuln.get("VulnerabilityID"),
+            ))
+        for misconfig in result.get("Misconfigurations") or []:
+            finding_id = misconfig.get("ID") or misconfig.get("AVDID") or misconfig.get("Type") or "MISCONFIGURATION"
+            metadata = misconfig.get("CauseMetadata") or {}
+            findings.append(make_security_finding(
+                context,
+                target=target,
+                package_name=misconfig.get("Type") or "Configuration",
+                vulnerability_id=finding_id,
+                severity=misconfig.get("Severity"),
+                fixed_version=misconfig.get("Resolution") or "Review and harden this configuration.",
+                description=" - ".join(item for item in [misconfig.get("Title"), misconfig.get("Message"), misconfig.get("Description")] if item),
+                source="IaC Misconfiguration",
+                line=metadata.get("StartLine") or metadata.get("EndLine"),
+                rule=finding_id,
+            ))
+        for secret in result.get("Secrets") or []:
+            finding_id = secret.get("RuleID") or secret.get("Category") or "SECRET"
+            findings.append(make_security_finding(
+                context,
+                target=target,
+                package_name=secret.get("Category") or "Secret",
+                vulnerability_id=finding_id,
+                severity=secret.get("Severity") or "HIGH",
+                fixed_version="Remove the secret from source control, rotate it, and use an approved secret manager.",
+                description=secret.get("Title") or "Potential secret detected.",
+                source="Secret Exposure",
+                line=secret.get("StartLine") or secret.get("EndLine"),
+                rule=finding_id,
+            ))
+    return findings
+
+
+def semgrep_default_rules(report_dir: Path) -> Path:
+    rules = report_dir / "horizon-semgrep-rules.yml"
+    rules.write_text(
+        """
+rules:
+  - id: horizon-hardcoded-secret
+    message: Potential hardcoded credential or secret.
+    severity: ERROR
+    languages: [generic]
+    pattern-regex: (?i)\\b(password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key)\\b\\s*[:=]\\s*['\\\"][^'\\\"\\n]{8,}['\\\"]
+  - id: horizon-private-key
+    message: Private key material detected.
+    severity: ERROR
+    languages: [generic]
+    pattern-regex: -----BEGIN (RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----
+  - id: horizon-dynamic-code-execution
+    message: Dynamic code execution detected.
+    severity: ERROR
+    languages: [javascript, typescript, python, java]
+    pattern-either:
+      - pattern: eval(...)
+      - pattern: Function(...)
+      - pattern: Runtime.getRuntime().exec(...)
+  - id: horizon-unsafe-dom-update
+    message: Unsafe DOM update pattern detected.
+    severity: WARNING
+    languages: [javascript, typescript]
+    pattern-either:
+      - pattern: $X.innerHTML = ...
+      - pattern: document.write(...)
+      - pattern: $S.bypassSecurityTrustHtml(...)
+  - id: horizon-plain-http-endpoint
+    message: Plain HTTP endpoint detected.
+    severity: WARNING
+    languages: [generic]
+    pattern-regex: ['\\\"]http://(?!localhost|127\\.0\\.0\\.1)[^'\\\"\\s]+['\\\"]
+""".strip() + "\n",
+        encoding="utf-8",
+    )
+    return rules
+
+
+def parse_semgrep_report(path: Path, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+    if not path.exists():
+        return []
+    try:
+        doc = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return []
+    findings = []
+    for item in doc.get("results", []) or []:
+        extra = item.get("extra") or {}
+        metadata = extra.get("metadata") or {}
+        line = (item.get("start") or {}).get("line")
+        rule_id = item.get("check_id") or "SEMGREP"
+        findings.append(make_security_finding(
+            context,
+            target=item.get("path") or "repository",
+            package_name=metadata.get("category") or metadata.get("technology") or "Source Code",
+            vulnerability_id=rule_id,
+            severity=extra.get("severity"),
+            fixed_version=metadata.get("fix") or "Review the affected code path and apply secure coding remediation.",
+            description=extra.get("message") or rule_id,
+            source="Static Code Security Finding",
+            line=line,
+            rule=rule_id,
+        ))
+    return findings
+
+
+def parse_gitleaks_report(path: Path, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+    if not path.exists():
+        return []
+    try:
+        doc = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return []
+    findings = []
+    if isinstance(doc, dict):
+        items = doc.get("findings") or doc.get("Findings") or []
+    else:
+        items = doc
+    for item in items or []:
+        rule_id = item.get("RuleID") or item.get("ruleID") or item.get("Rule") or "SECRET"
+        findings.append(make_security_finding(
+            context,
+            target=item.get("File") or item.get("file") or "repository",
+            package_name=item.get("Description") or item.get("description") or "Secret",
+            vulnerability_id=rule_id,
+            severity="HIGH",
+            fixed_version="Remove the secret, rotate it, and store future credentials in an approved secret manager.",
+            description=item.get("Description") or item.get("Match") or "Potential secret detected by repository secret scan.",
+            source="Secret Exposure",
+            line=item.get("StartLine") or item.get("Line"),
+            rule=rule_id,
+        ))
+    return findings
+
+
+def discover_manifest_inputs(source_dir: Path, report_dir: Path) -> List[Path]:
+    candidates: List[Path] = []
+    for dirname in ["k8s", "kubernetes", "manifests", "deploy", "deployment", "helm"]:
+        base = source_dir / dirname
+        if base.exists():
+            candidates.extend(path for path in base.rglob("*") if path.suffix.lower() in {".yaml", ".yml"} and path.is_file())
+    candidates.extend(path for path in source_dir.glob("*.yaml") if path.is_file())
+    candidates.extend(path for path in source_dir.glob("*.yml") if path.is_file())
+    chart_dirs = sorted({path.parent for path in source_dir.rglob("Chart.yaml") if path.is_file()})
+    rendered_dir = report_dir / "rendered"
+    rendered_dir.mkdir(parents=True, exist_ok=True)
+    for chart_dir in chart_dirs[:5]:
+        output = rendered_dir / f"{safe_file_token(str(chart_dir.relative_to(source_dir)))}.yaml"
+        result = run_command(["helm", "template", safe_k8s_name(chart_dir.name), str(chart_dir)], cwd=source_dir, check=False)
+        if result.returncode == 0 and result.stdout.strip():
+            output.write_text(result.stdout, encoding="utf-8")
+            candidates.append(output)
+        else:
+            (rendered_dir / f"{safe_file_token(str(chart_dir.relative_to(source_dir)))}.log").write_text(command_output_tail(result), encoding="utf-8")
+    for kustomization in source_dir.rglob("kustomization.yaml"):
+        output = rendered_dir / f"{safe_file_token(str(kustomization.parent.relative_to(source_dir)))}-kustomize.yaml"
+        result = run_command(["kubectl", "kustomize", str(kustomization.parent)], cwd=source_dir, check=False)
+        if result.returncode == 0 and result.stdout.strip():
+            output.write_text(result.stdout, encoding="utf-8")
+            candidates.append(output)
+    unique = []
+    seen = set()
+    for path in candidates:
+        if any(part in {".git", "node_modules", "target", "dist", "build"} for part in path.parts):
+            continue
+        key = str(path.resolve())
+        if key not in seen:
+            seen.add(key)
+            unique.append(path)
+    return unique
+
+
+def built_in_conftest_policy(report_dir: Path) -> Path:
+    policy_dir = report_dir / "policies"
+    policy_dir.mkdir(parents=True, exist_ok=True)
+    (policy_dir / "horizon-kubernetes.rego").write_text(
+        """
+package main
+
+workload_containers[c] {
+  input.kind == "Pod"
+  c := input.spec.containers[_]
+}
+
+workload_containers[c] {
+  input.kind != "Pod"
+  spec := input.spec.template.spec
+  c := spec.containers[_]
+}
+
+deny[msg] {
+  c := workload_containers[_]
+  c.securityContext.privileged == true
+  msg := sprintf("Privileged container is not allowed: %v", [c.name])
+}
+
+deny[msg] {
+  input.kind == "Pod"
+  input.spec.hostNetwork == true
+  msg := "hostNetwork is not allowed"
+}
+
+deny[msg] {
+  c := workload_containers[_]
+  not c.securityContext.runAsNonRoot
+  msg := sprintf("Container should set securityContext.runAsNonRoot=true: %v", [c.name])
+}
+
+deny[msg] {
+  c := workload_containers[_]
+  not c.resources.limits.cpu
+  msg := sprintf("Container is missing CPU limit: %v", [c.name])
+}
+
+deny[msg] {
+  c := workload_containers[_]
+  not c.resources.limits.memory
+  msg := sprintf("Container is missing memory limit: %v", [c.name])
+}
+
+warn[msg] {
+  c := workload_containers[_]
+  endswith(c.image, ":latest")
+  msg := sprintf("Image should not use latest tag: %v", [c.image])
+}
+""".strip() + "\n",
+        encoding="utf-8",
+    )
+    return policy_dir
+
+
+def parse_conftest_report(path: Path, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+    if not path.exists():
+        return []
+    try:
+        doc = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return []
+    findings = []
+    for result in doc if isinstance(doc, list) else [doc]:
+        target = result.get("filename") or result.get("file") or "manifest"
+        for item in result.get("failures") or []:
+            message = item.get("msg") if isinstance(item, dict) else str(item)
+            findings.append(make_security_finding(
+                context,
+                target=target,
+                package_name="Kubernetes Policy",
+                vulnerability_id=security_finding_id("OPA-DENY", target, "policy", "", message),
+                severity="HIGH",
+                fixed_version="Update the manifest or Helm values to satisfy the required platform policy.",
+                description=message,
+                source="Policy Violation",
+                rule="OPA-DENY",
+            ))
+        for item in result.get("warnings") or []:
+            message = item.get("msg") if isinstance(item, dict) else str(item)
+            findings.append(make_security_finding(
+                context,
+                target=target,
+                package_name="Kubernetes Policy",
+                vulnerability_id=security_finding_id("OPA-WARN", target, "policy", "", message),
+                severity="MEDIUM",
+                fixed_version="Review and harden this manifest before production promotion.",
+                description=message,
+                source="Policy Violation",
+                rule="OPA-WARN",
+            ))
+    return findings
 
 
 def execute_security_preflight(action: Dict[str, Any], context: Dict[str, Any]) -> None:
@@ -1553,73 +2836,185 @@ def execute_security_preflight(action: Dict[str, Any], context: Dict[str, Any]) 
 def execute_security_static_code(action: Dict[str, Any], context: Dict[str, Any]) -> None:
     source_dir = get_source_dir(context)
     report_dir = action_report_dir(action, context, "static-security")
-    patterns = [
-        ("hardcoded_secret", re.compile(r"(?i)(password|secret|token|apikey|api_key)\s*[:=]\s*['\"][^'\"]{8,}")),
-        ("dangerous_eval", re.compile(r"\beval\s*\(")),
-        ("insecure_http", re.compile(r"(?i)['\"]http://")),
-        ("shell_exec", re.compile(r"(?i)(exec|spawn|Runtime\.getRuntime\(\)\.exec)")),
-    ]
-    findings = []
-    for path in source_dir.rglob("*"):
-        if not path.is_file() or any(part in {".git", "node_modules", "target", "dist", "build"} for part in path.parts):
-            continue
-        try:
-            text = path.read_text(errors="ignore")
-        except OSError:
-            continue
-        for idx, line in enumerate(text.splitlines(), start=1):
-            for rule_id, pattern in patterns:
-                if pattern.search(line):
-                    findings.append({
-                        "ruleId": rule_id,
-                        "file": str(path.relative_to(source_dir)),
-                        "line": idx,
-                        "severity": "HIGH" if rule_id in {"hardcoded_secret", "dangerous_eval"} else "MEDIUM",
-                    })
-    write_json(report_dir / "findings.json", findings)
-    write_json(report_dir / "summary.json", {"status": "PASSED", "findingCount": len(findings), "reviewTeam": action.get("reviewTeam") or ""})
+    findings: List[Dict[str, Any]] = []
+    tools: List[str] = []
+    command_status: Dict[str, Any] = {}
+
+    if shutil.which("semgrep"):
+        tools.append("semgrep")
+        rule_file = semgrep_default_rules(report_dir)
+        repo_configs = [path for path in [source_dir / ".semgrep.yml", source_dir / ".semgrep.yaml"] if path.exists()]
+        config_args = []
+        for config_file in repo_configs + [rule_file]:
+            config_args.extend(["--config", str(config_file)])
+        semgrep_json = report_dir / "semgrep.json"
+        semgrep_sarif = report_dir / "semgrep.sarif"
+        json_cmd = ["semgrep", "scan", *config_args, "--json", "--output", str(semgrep_json), "."]
+        sarif_cmd = ["semgrep", "scan", *config_args, "--sarif", "--output", str(semgrep_sarif), "."]
+        write_command_audit(report_dir / "semgrep-command.txt", json_cmd)
+        result = run_command(json_cmd, cwd=source_dir, check=False)
+        command_status["semgrepJsonExitCode"] = result.returncode
+        command_status["semgrepOutputTail"] = command_output_tail(result)
+        sarif = run_command(sarif_cmd, cwd=source_dir, check=False)
+        command_status["semgrepSarifExitCode"] = sarif.returncode
+        findings.extend(parse_semgrep_report(semgrep_json, context))
+    else:
+        command_status["semgrep"] = "not_installed"
+
+    if shutil.which("gitleaks"):
+        tools.append("gitleaks")
+        gitleaks_json = report_dir / "gitleaks.json"
+        gitleaks_sarif = report_dir / "gitleaks.sarif"
+        json_cmd = ["gitleaks", "detect", "--source", ".", "--no-git", "--redact", "--report-format", "json", "--report-path", str(gitleaks_json)]
+        sarif_cmd = ["gitleaks", "detect", "--source", ".", "--no-git", "--redact", "--report-format", "sarif", "--report-path", str(gitleaks_sarif)]
+        write_command_audit(report_dir / "gitleaks-command.txt", json_cmd)
+        result = run_command(json_cmd, cwd=source_dir, check=False)
+        command_status["gitleaksJsonExitCode"] = result.returncode
+        command_status["gitleaksOutputTail"] = command_output_tail(result)
+        sarif = run_command(sarif_cmd, cwd=source_dir, check=False)
+        command_status["gitleaksSarifExitCode"] = sarif.returncode
+        findings.extend(parse_gitleaks_report(gitleaks_json, context))
+    else:
+        command_status["gitleaks"] = "not_installed"
+
+    if not tools:
+        raise HTTPException(status_code=500, detail="Static security scanners are not installed in the runner image")
+
+    finalize_security_report(
+        report_dir,
+        action,
+        context,
+        tool="static-security",
+        tool_name="Static Security Scan",
+        stage="static-security",
+        tools=tools,
+        findings=findings,
+        extra={"commandStatus": command_status, "reviewTeam": action.get("reviewTeam") or ""},
+    )
 
 
 def execute_security_container_iac(action: Dict[str, Any], context: Dict[str, Any]) -> None:
     source_dir = get_source_dir(context)
     report_dir = action_report_dir(action, context, "container-iac")
-    image_uri = render_value(action.get("imageUri") or "", context)
+    payload = context.get("requestPayload") or {}
+    image_uri = render_value(action.get("imageUri") or payload.get("IMAGE_URI") or payload.get("imageUri") or "{{image.uriWithDigest}}" or "{{image.uri}}", context)
+    if image_uri in {"{{image.uriWithDigest}}", "{{image.uri}}"}:
+        image_uri = ""
     region = action.get("awsRegion") or os.getenv("AWS_REGION", "us-east-1")
     role_env = assume_role_env(action.get("roleArn", ""), region, f"horizon-scan-{context['requestId']}")
-    results = {"filesystem": "NOT_RUN", "image": "NOT_RUN", "status": "PASSED"}
-    if shutil.which("trivy"):
-        fs_json = report_dir / "filesystem-security.json"
-        fs = run_command(["trivy", "fs", "--format", "json", "--scanners", "vuln,secret,config", "--severity", "CRITICAL,HIGH,MEDIUM", "--output", str(fs_json), "."], cwd=source_dir, check=False)
-        results["filesystem"] = "PASSED" if fs.returncode == 0 else "FINDINGS"
-        if image_uri:
-            image_json = report_dir / "image-security.json"
-            image = run_command(["trivy", "image", "--format", "json", "--severity", "CRITICAL,HIGH,MEDIUM", "--output", str(image_json), image_uri], env=role_env, check=False)
-            results["image"] = "PASSED" if image.returncode == 0 else "FINDINGS"
+    if not shutil.which("trivy"):
+        raise HTTPException(status_code=500, detail="Trivy is not installed in the runner image")
+
+    tools = ["trivy"]
+    command_status: Dict[str, Any] = {}
+    findings: List[Dict[str, Any]] = []
+    severities = "CRITICAL,HIGH,MEDIUM,LOW,UNKNOWN"
+
+    fs_json = report_dir / "filesystem-security.json"
+    fs_sarif = report_dir / "filesystem-security.sarif"
+    fs_table = report_dir / "filesystem-security.txt"
+    fs_cmd = ["trivy", "fs", "--format", "json", "--scanners", "vuln,secret,config", "--severity", severities, "--output", str(fs_json), "."]
+    write_command_audit(report_dir / "trivy-filesystem-command.txt", fs_cmd)
+    fs = run_command(fs_cmd, cwd=source_dir, check=False, timeout=1800)
+    command_status["filesystemJsonExitCode"] = fs.returncode
+    command_status["filesystemOutputTail"] = command_output_tail(fs)
+    run_command(["trivy", "fs", "--format", "sarif", "--scanners", "vuln,secret,config", "--severity", severities, "--output", str(fs_sarif), "."], cwd=source_dir, check=False, timeout=1800)
+    table = run_command(["trivy", "fs", "--format", "table", "--scanners", "vuln,secret,config", "--severity", severities, "."], cwd=source_dir, check=False, timeout=1800)
+    fs_table.write_text((table.stdout or "") + (table.stderr or ""), encoding="utf-8")
+    findings.extend(parse_trivy_report(fs_json, context, "Dependency Vulnerability"))
+
+    if image_uri:
+        image_json = report_dir / "image-security.json"
+        image_sarif = report_dir / "image-security.sarif"
+        image_table = report_dir / "image-security.txt"
+        image_cmd = ["trivy", "image", "--format", "json", "--scanners", "vuln,secret,config", "--severity", severities, "--output", str(image_json), str(image_uri)]
+        write_command_audit(report_dir / "trivy-image-command.txt", image_cmd)
+        image = run_command(image_cmd, env=role_env, check=False, timeout=1800)
+        command_status["imageJsonExitCode"] = image.returncode
+        command_status["imageOutputTail"] = command_output_tail(image)
+        run_command(["trivy", "image", "--format", "sarif", "--scanners", "vuln,secret,config", "--severity", severities, "--output", str(image_sarif), str(image_uri)], env=role_env, check=False, timeout=1800)
+        table = run_command(["trivy", "image", "--format", "table", "--scanners", "vuln,secret,config", "--severity", severities, str(image_uri)], env=role_env, check=False, timeout=1800)
+        image_table.write_text((table.stdout or "") + (table.stderr or ""), encoding="utf-8")
+        findings.extend(parse_trivy_report(image_json, context, "Container Vulnerability"))
     else:
-        results["status"] = "COMPLETED_WITHOUT_EXTERNAL_SCANNER"
-    write_json(report_dir / "summary.json", results)
+        command_status["image"] = "not_configured"
+
+    finalize_security_report(
+        report_dir,
+        action,
+        context,
+        tool="container-iac",
+        tool_name="Container/IaC Vulnerability Scan",
+        stage="container-iac",
+        tools=tools,
+        findings=findings,
+        extra={"commandStatus": command_status, "imageUri": image_uri or ""},
+    )
 
 
 def execute_security_policy(action: Dict[str, Any], context: Dict[str, Any]) -> None:
     source_dir = get_source_dir(context)
     report_dir = action_report_dir(action, context, "policy")
-    findings = []
-    for path in list(source_dir.rglob("*.yaml")) + list(source_dir.rglob("*.yml")):
-        if any(part in {".git", "node_modules", "target", "dist", "build"} for part in path.parts):
-            continue
-        text = path.read_text(errors="ignore")
-        if "privileged: true" in text:
-            findings.append({"ruleId": "no-privileged-workloads", "file": str(path.relative_to(source_dir)), "severity": "HIGH"})
-        if "hostNetwork: true" in text:
-            findings.append({"ruleId": "no-host-network", "file": str(path.relative_to(source_dir)), "severity": "HIGH"})
-        if re.search(r"image:\s+[^:\s]+(?:\s|$)", text):
-            findings.append({"ruleId": "image-tag-required", "file": str(path.relative_to(source_dir)), "severity": "MEDIUM"})
-    if (source_dir / "Dockerfile").exists():
-        dockerfile = (source_dir / "Dockerfile").read_text(errors="ignore")
-        if re.search(r"(?im)^USER\s+root\s*$", dockerfile) or not re.search(r"(?im)^USER\s+\S+", dockerfile):
-            findings.append({"ruleId": "container-non-root-user", "file": "Dockerfile", "severity": "MEDIUM"})
-    write_json(report_dir / "findings.json", findings)
-    write_json(report_dir / "summary.json", {"status": "PASSED", "findingCount": len(findings)})
+    if not shutil.which("conftest"):
+        raise HTTPException(status_code=500, detail="Conftest is not installed in the runner image")
+
+    tools = ["conftest", "opa"]
+    manifest_inputs = discover_manifest_inputs(source_dir, report_dir)
+    policy_dirs = [built_in_conftest_policy(report_dir)]
+    for candidate in [
+        source_dir / "policy",
+        source_dir / "policies",
+        source_dir / ".horizon" / "policy",
+        source_dir / ".horizon" / "policies",
+    ]:
+        if candidate.exists():
+            policy_dirs.append(candidate)
+
+    findings: List[Dict[str, Any]] = []
+    command_status: Dict[str, Any] = {"manifestCount": len(manifest_inputs), "policyDirectories": [str(path) for path in policy_dirs]}
+    if manifest_inputs:
+        conftest_json = report_dir / "conftest.json"
+        cmd = ["conftest", "test", "--output", "json"]
+        for policy_dir in policy_dirs:
+            cmd.extend(["--policy", str(policy_dir)])
+        cmd.extend(str(path) for path in manifest_inputs)
+        write_command_audit(report_dir / "conftest-command.txt", cmd)
+        result = run_command(cmd, cwd=source_dir, check=False)
+        command_status["conftestExitCode"] = result.returncode
+        command_status["conftestOutputTail"] = command_output_tail(result)
+        conftest_json.write_text(result.stdout or "[]", encoding="utf-8")
+        findings.extend(parse_conftest_report(conftest_json, context))
+    else:
+        command_status["conftest"] = "no_manifests_found"
+
+    dockerfile = source_dir / "Dockerfile"
+    if dockerfile.exists():
+        text = dockerfile.read_text(errors="ignore")
+        if re.search(r"(?im)^USER\s+root\s*$", text) or not re.search(r"(?im)^USER\s+\S+", text):
+            findings.append(make_security_finding(
+                context,
+                target="Dockerfile",
+                package_name="Container Policy",
+                vulnerability_id="container-non-root-user",
+                severity="MEDIUM",
+                fixed_version="Set a non-root USER in the Dockerfile and run the application with least privilege.",
+                description="Dockerfile should define a non-root runtime user.",
+                source="Policy Violation",
+                rule="container-non-root-user",
+            ))
+
+    write_json(report_dir / "manifest-inputs.json", [relative_path(path, source_dir) for path in manifest_inputs])
+    finalize_security_report(
+        report_dir,
+        action,
+        context,
+        tool="policy-validation",
+        tool_name="Policy Validation",
+        stage="policy-validation",
+        tools=tools,
+        findings=findings,
+        extra={"commandStatus": command_status},
+    )
 
 
 def execute_release_load_metadata(action: Dict[str, Any], context: Dict[str, Any]) -> None:
