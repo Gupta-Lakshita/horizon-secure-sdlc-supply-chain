@@ -17,31 +17,37 @@ async def create_run(
     db: AsyncSession = Depends(get_db),
 ) -> RunResponse:
     try:
-        row = (await db.execute(
-            text(
-                "INSERT INTO release_trust_runs "
-                "(client_id, application, release_id, commit_sha, image_digest, evidence_s3_prefix, created_by) "
-                "VALUES (:client_id, :application, :release_id, :commit_sha, :image_digest, :s3_prefix, :created_by) "
-                "RETURNING id, application, release_id, commit_sha, image_digest, status, created_at"
-            ),
-            {
-                "client_id": client_id,
-                "application": request.application,
-                "release_id": request.releaseId,
-                "commit_sha": request.commitSha,
-                "image_digest": request.imageDigest,
-                "s3_prefix": request.evidenceS3Prefix,
-                "created_by": request.createdBy,
-            },
-        )).mappings().first()
+        row = (
+            await db.execute(
+                text(
+                    "INSERT INTO release_trust_runs "
+                    "(client_id, application, release_id, commit_sha, image_digest, evidence_s3_prefix, created_by) "
+                    "VALUES (:client_id, :application, :release_id, :commit_sha, :image_digest, :s3_prefix, :created_by) "
+                    "RETURNING id, application, release_id, commit_sha, image_digest, status, created_at"
+                ),
+                {
+                    "client_id": client_id,
+                    "application": request.application,
+                    "release_id": request.releaseId,
+                    "commit_sha": request.commitSha,
+                    "image_digest": request.imageDigest,
+                    "s3_prefix": request.evidenceS3Prefix,
+                    "created_by": request.createdBy,
+                },
+            )
+        ).mappings().first()
+
         await db.commit()
+
     except Exception as exc:
         await db.rollback()
+
         if "uq_release_runs" in str(exc):
             raise HTTPException(
                 status_code=409,
                 detail=f"Release run for ({client_id}, {request.application}, {request.releaseId}) already exists",
             )
+
         raise HTTPException(status_code=500, detail=str(exc))
 
     return RunResponse(
@@ -51,7 +57,7 @@ async def create_run(
         commitSha=row["commit_sha"],
         imageDigest=row["image_digest"],
         status=row["status"],
-        createdAt=row["created_at"].isoformat(),
+        createdAt=str(row["created_at"]) if row["created_at"] else "",
     )
 
 
@@ -61,26 +67,35 @@ async def get_run(
     client_id: str = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
 ) -> RunDetailResponse:
-    row = (await db.execute(
-        text(
-            "SELECT id, application, release_id, commit_sha, image_digest, "
-            "evidence_s3_prefix, status, created_at, updated_at "
-            "FROM release_trust_runs WHERE id = :run_id AND client_id = :client_id"
-        ),
-        {"run_id": run_id, "client_id": client_id},
-    )).mappings().first()
+    row = (
+        await db.execute(
+            text(
+                "SELECT id, application, release_id, commit_sha, image_digest, "
+                "evidence_s3_prefix, status, created_at, updated_at "
+                "FROM release_trust_runs "
+                "WHERE id = :run_id AND client_id = :client_id"
+            ),
+            {"run_id": run_id, "client_id": client_id},
+        )
+    ).mappings().first()
 
     if not row:
-        raise HTTPException(status_code=404, detail=f"Release run {run_id} not found")
+        raise HTTPException(
+            status_code=404,
+            detail=f"Release run {run_id} not found",
+        )
 
-    ev_rows = (await db.execute(
-        text(
-            "SELECT evidence_type, status, object_key, sha256, schema_version, created_at "
-            "FROM release_trust_evidence WHERE release_run_id = :run_id AND client_id = :client_id "
-            "ORDER BY created_at"
-        ),
-        {"run_id": run_id, "client_id": client_id},
-    )).mappings().all()
+    ev_rows = (
+        await db.execute(
+            text(
+                "SELECT evidence_type, status, object_key, sha256, schema_version, created_at "
+                "FROM release_trust_evidence "
+                "WHERE release_run_id = :run_id AND client_id = :client_id "
+                "ORDER BY created_at"
+            ),
+            {"run_id": run_id, "client_id": client_id},
+        )
+    ).mappings().all()
 
     evidence = [
         {
@@ -89,7 +104,7 @@ async def get_run(
             "objectKey": e["object_key"],
             "sha256": e["sha256"],
             "schemaVersion": e["schema_version"],
-            "createdAt": e["created_at"].isoformat(),
+            "createdAt": str(e["created_at"]) if e["created_at"] else "",
         }
         for e in ev_rows
     ]
@@ -102,8 +117,8 @@ async def get_run(
         imageDigest=row["image_digest"],
         evidenceS3Prefix=row["evidence_s3_prefix"],
         status=row["status"],
-        createdAt=row["created_at"].isoformat(),
-        updatedAt=row["updated_at"].isoformat(),
+        createdAt=str(row["created_at"]) if row["created_at"] else "",
+        updatedAt=str(row["updated_at"]) if row["updated_at"] else "",
         evidence=evidence,
     )
 
@@ -115,23 +130,37 @@ async def list_runs(
     db: AsyncSession = Depends(get_db),
 ) -> list[RunResponse]:
     if application:
-        rows = (await db.execute(
-            text(
-                "SELECT id, application, release_id, commit_sha, image_digest, status, created_at "
-                "FROM release_trust_runs WHERE client_id = :client_id AND application = :application "
-                "ORDER BY created_at DESC LIMIT 100"
-            ),
-            {"client_id": client_id, "application": application},
-        )).mappings().all()
+        rows = (
+            await db.execute(
+                text(
+                    "SELECT id, application, release_id, commit_sha, image_digest, status, created_at "
+                    "FROM release_trust_runs "
+                    "WHERE client_id = :client_id "
+                    "AND application = :application "
+                    "ORDER BY created_at DESC "
+                    "LIMIT 100"
+                ),
+                {
+                    "client_id": client_id,
+                    "application": application,
+                },
+            )
+        ).mappings().all()
     else:
-        rows = (await db.execute(
-            text(
-                "SELECT id, application, release_id, commit_sha, image_digest, status, created_at "
-                "FROM release_trust_runs WHERE client_id = :client_id "
-                "ORDER BY created_at DESC LIMIT 100"
-            ),
-            {"client_id": client_id},
-        )).mappings().all()
+        rows = (
+            await db.execute(
+                text(
+                    "SELECT id, application, release_id, commit_sha, image_digest, status, created_at "
+                    "FROM release_trust_runs "
+                    "WHERE client_id = :client_id "
+                    "ORDER BY created_at DESC "
+                    "LIMIT 100"
+                ),
+                {
+                    "client_id": client_id,
+                },
+            )
+        ).mappings().all()
 
     return [
         RunResponse(
@@ -141,7 +170,7 @@ async def list_runs(
             commitSha=r["commit_sha"],
             imageDigest=r["image_digest"],
             status=r["status"],
-            createdAt=r["created_at"].isoformat(),
+            createdAt=str(r["created_at"]) if r["created_at"] else "",
         )
         for r in rows
     ]
