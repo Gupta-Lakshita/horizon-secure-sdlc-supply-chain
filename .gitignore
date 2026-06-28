@@ -10,3 +10,8 @@ secure_SDLC_Platform/.generated/
 **/.terraform/
 license*.json
 secrets*.yaml
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
