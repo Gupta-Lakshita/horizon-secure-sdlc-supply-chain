@@ -2537,6 +2537,77 @@ def execute_eks_deploy(action: Dict[str, Any], context: Dict[str, Any]) -> None:
         run_command(["aws", "s3", "cp", str(path), f"s3://{artifact['bucket']}/{artifact['prefix']}/{(target_env or 'deploy').lower()}/deployment.json", "--region", region], env=role_env)
 
 
+def execute_release_trust_attest(action: Dict[str, Any], context: Dict[str, Any]) -> None:
+    rendered = render_value(action, context)
+    trust_url = rendered.get("trustServiceUrl") or os.getenv("HORIZON_TRUST_SERVICE_URL", "")
+    if not trust_url:
+        raise HTTPException(status_code=503, detail="Release trust service URL is not configured (HORIZON_TRUST_SERVICE_URL)")
+    image_digest = context.get("image", {}).get("digest") or context.get("release", {}).get("sourceImageDigest")
+    if not image_digest:
+        raise HTTPException(status_code=422, detail="Image digest is required for trust attestation")
+    artifact = context.get("artifact", {})
+    payload = {
+        "imageDigest": image_digest,
+        "imageRepo": context.get("image", {}).get("repository") or rendered.get("imageRepo", ""),
+        "targetEnv": rendered.get("targetEnv", ""),
+        "stage": rendered.get("stage", "pipeline"),
+        "attestedBy": rendered.get("attestedBy") or "horizon-runner",
+        "changeTicket": rendered.get("changeTicket") or rendered.get("changeTicketRef", ""),
+        "evidenceBucket": rendered.get("evidenceBucket") or artifact.get("bucket", ""),
+        "evidencePrefix": rendered.get("evidencePrefix") or artifact.get("prefix", ""),
+        "evidenceRegion": rendered.get("evidenceRegion") or artifact.get("region", ""),
+        "roleArn": rendered.get("roleArn") or artifact.get("roleArn", ""),
+    }
+    headers = {"Content-Type": "application/json"}
+    client_id = context.get("runner", {}).get("clientId") or config.client_id
+    if client_id:
+        headers["X-Client-ID"] = client_id
+    try:
+        response = requests.post(f"{trust_url.rstrip('/')}/v1/attest", json=payload, headers=headers, timeout=30)
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=502, detail=f"Unable to reach release trust service: {exc}") from exc
+    if response.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"Release trust attestation failed: {response.status_code} {response.text}")
+    context["trust"] = response.json()
+
+
+def execute_release_trust_gate(action: Dict[str, Any], context: Dict[str, Any]) -> None:
+    rendered = render_value(action, context)
+    trust_url = rendered.get("trustServiceUrl") or os.getenv("HORIZON_TRUST_SERVICE_URL", "")
+    if not trust_url:
+        raise HTTPException(status_code=503, detail="Release trust service URL is not configured (HORIZON_TRUST_SERVICE_URL)")
+    image_digest = context.get("image", {}).get("digest") or context.get("release", {}).get("sourceImageDigest")
+    if not image_digest:
+        raise HTTPException(status_code=422, detail="Image digest is required for release gate check")
+    artifact = context.get("artifact", {})
+    payload = {
+        "imageDigest": image_digest,
+        "imageRepo": context.get("image", {}).get("repository") or rendered.get("imageRepo", ""),
+        "targetEnv": rendered.get("targetEnv", ""),
+        "changeTicket": rendered.get("changeTicket") or rendered.get("changeTicketRef", ""),
+        "requiredStages": rendered.get("requiredStages") or [],
+        "evidenceBucket": rendered.get("evidenceBucket") or artifact.get("bucket", ""),
+        "evidencePrefix": rendered.get("evidencePrefix") or artifact.get("prefix", ""),
+        "evidenceRegion": rendered.get("evidenceRegion") or artifact.get("region", ""),
+        "roleArn": rendered.get("roleArn") or artifact.get("roleArn", ""),
+    }
+    headers = {"Content-Type": "application/json"}
+    client_id = context.get("runner", {}).get("clientId") or config.client_id
+    if client_id:
+        headers["X-Client-ID"] = client_id
+    try:
+        response = requests.post(f"{trust_url.rstrip('/')}/v1/gate", json=payload, headers=headers, timeout=30)
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=502, detail=f"Unable to reach release trust service: {exc}") from exc
+    if response.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"Release gate check failed: {response.status_code} {response.text}")
+    gate = response.json()
+    context["trustGate"] = gate
+    if gate.get("status") == "DENIED":
+        violations = [v.get("message", v.get("policyId", "")) for v in gate.get("violations", [])]
+        raise HTTPException(status_code=422, detail=f"Release gate denied: {'; '.join(violations)}")
+
+
 STAGE_ALIASES = {
     "checkout": "checkout",
     "source": "checkout",
@@ -2614,9 +2685,9 @@ def action_stage(action: Dict[str, Any]) -> str:
         return "validation-results"
     if action_type == "artifact.context" and "validation" in action_name:
         return "validation-results"
-    if action_type in {"image.build_push", "artifact.context", "artifact.publish", "release.promote_image"}:
+    if action_type in {"image.build_push", "artifact.context", "artifact.publish", "release.promote_image", "release.trust_attest"}:
         return "publish"
-    if action_type in {"eks.deploy", "release.publish_approval"}:
+    if action_type in {"eks.deploy", "release.publish_approval", "release.trust_gate"}:
         return "deploy"
     return "build"
 
@@ -2777,6 +2848,18 @@ def execute_actions(actions: List[Dict[str, Any]], request: RunnerRequest) -> Li
 
         if action_type == "release.publish_approval":
             execute_release_publish_approval(action, context)
+            executed.append(name)
+            save_runner_context(context)
+            continue
+
+        if action_type == "release.trust_attest":
+            execute_release_trust_attest(action, context)
+            executed.append(name)
+            save_runner_context(context)
+            continue
+
+        if action_type == "release.trust_gate":
+            execute_release_trust_gate(action, context)
             executed.append(name)
             save_runner_context(context)
             continue
