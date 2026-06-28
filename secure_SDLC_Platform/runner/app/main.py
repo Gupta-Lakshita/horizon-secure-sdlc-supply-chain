@@ -2786,6 +2786,7 @@ def execute_actions(actions: List[Dict[str, Any]], request: RunnerRequest) -> Li
             executed.append(name)
             save_runner_context(context)
             continue
+        
 
         raise HTTPException(status_code=422, detail=f"Unsupported runner action type: {action_type}")
     return executed
