@@ -2608,6 +2608,81 @@ def execute_release_trust_gate(action: Dict[str, Any], context: Dict[str, Any]) 
         raise HTTPException(status_code=422, detail=f"Release gate denied: {'; '.join(violations)}")
 
 
+def _assert_no_secrets(doc: Dict[str, Any]) -> None:
+    secret_pattern = re.compile(
+        r"(?i)\b(password|passwd|secret|token|apikey|api_key|client_secret)\b\s*[:=]\s*['\"][^'\"]{8,}"
+    )
+    for value in doc.values():
+        if isinstance(value, str) and secret_pattern.search(value):
+            raise HTTPException(status_code=422, detail="release.trust.collect_source: potential secret detected in source document")
+
+
+def execute_release_trust_collect_source(action: Dict[str, Any], context: Dict[str, Any]) -> None:
+    """Capture source metadata and write source.json to run dir and S3."""
+    rendered = render_value(action, context)
+    region = rendered["awsRegion"]
+    bucket = rendered["artifactBucket"]
+    application = context_application(context)
+    release_id = rendered.get("releaseId") or context.get("requestId")
+
+    git = context.get("git") or {}
+    commit_sha = git.get("commitSha") or rendered.get("commitSha")
+    if not commit_sha:
+        raise HTTPException(status_code=422, detail="release.trust.collect_source: commitSha is required")
+
+    source_doc = {
+        "schemaVersion": "2026-06-source-v1",
+        "clientId": config.client_id,
+        "application": application,
+        "releaseId": release_id,
+        "provider": "github",
+        "repositoryUrl": git.get("repoUrl") or rendered.get("repositoryUrl", ""),
+        "branch": git.get("branch") or rendered.get("branch", ""),
+        "commitSha": commit_sha,
+        "tag": rendered.get("tag", ""),
+        "prNumber": rendered.get("prNumber"),
+        "requester": context.get("requestPayload", {}).get("requester", ""),
+        "checkoutAt": utc_now().isoformat(),
+    }
+
+    _assert_no_secrets(source_doc)
+
+    local_path = context["runDir"] / "artifacts" / "source.json"
+    local_path.parent.mkdir(parents=True, exist_ok=True)
+    write_json(local_path, source_doc)
+
+    role_env = assume_role_env(rendered.get("roleArn", ""), region, f"horizon-rt-source-{context['requestId']}")
+    s3_key = f"release-trust/{application}/{release_id}/source.json"
+    run_command(["aws", "s3", "cp", str(local_path), f"s3://{bucket}/{s3_key}", "--region", region], env=role_env)
+
+    context.setdefault("release_trust", {})["source"] = source_doc
+    context["release_trust"]["evidencePrefix"] = f"release-trust/{application}/{release_id}"
+
+
+def execute_release_trust_resolve_digest(action: Dict[str, Any], context: Dict[str, Any]) -> None:
+    raise HTTPException(status_code=501, detail="release.trust.resolve_digest: not yet implemented")
+
+
+def execute_release_trust_generate_sbom(action: Dict[str, Any], context: Dict[str, Any]) -> None:
+    raise HTTPException(status_code=501, detail="release.trust.generate_sbom: not yet implemented")
+
+
+def execute_release_trust_sign_image(action: Dict[str, Any], context: Dict[str, Any]) -> None:
+    raise HTTPException(status_code=501, detail="release.trust.sign_image: not yet implemented")
+
+
+def execute_release_trust_generate_provenance(action: Dict[str, Any], context: Dict[str, Any]) -> None:
+    raise HTTPException(status_code=501, detail="release.trust.generate_provenance: not yet implemented")
+
+
+def execute_release_trust_publish_evidence(action: Dict[str, Any], context: Dict[str, Any]) -> None:
+    raise HTTPException(status_code=501, detail="release.trust.publish_evidence: not yet implemented")
+
+
+def execute_release_trust_verify_promotion(action: Dict[str, Any], context: Dict[str, Any]) -> None:
+    raise HTTPException(status_code=501, detail="release.trust.verify_promotion: not yet implemented")
+
+
 STAGE_ALIASES = {
     "checkout": "checkout",
     "source": "checkout",
