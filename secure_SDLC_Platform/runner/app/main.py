@@ -2648,6 +2648,12 @@ STAGE_ALIASES = {
     "artifact": "publish",
     "deploy": "deploy",
     "release": "deploy",
+    "release-trust": "release-trust",
+    "trust": "release-trust",
+    "evidence": "release-trust",
+    "sbom": "release-trust",
+    "provenance": "release-trust",
+    "signing": "release-trust",
 }
 
 
@@ -2689,6 +2695,16 @@ def action_stage(action: Dict[str, Any]) -> str:
         return "publish"
     if action_type in {"eks.deploy", "release.publish_approval", "release.trust_gate"}:
         return "deploy"
+    if action_type in {
+        "release.trust.collect_source",
+        "release.trust.resolve_digest",
+        "release.trust.generate_sbom",
+        "release.trust.sign_image",
+        "release.trust.generate_provenance",
+        "release.trust.publish_evidence",
+        "release.trust.verify_promotion",
+    }:
+        return "release-trust"
     return "build"
 
 
@@ -2707,6 +2723,7 @@ def available_action_stages(actions: List[Dict[str, Any]]) -> List[str]:
         "publish",
         "validation-results",
         "deploy",
+        "release-trust",
     ]
     stages = {action_stage(action) for action in actions}
     return [stage for stage in order if stage in stages]
@@ -2860,6 +2877,50 @@ def execute_actions(actions: List[Dict[str, Any]], request: RunnerRequest) -> Li
 
         if action_type == "release.trust_gate":
             execute_release_trust_gate(action, context)
+            executed.append(name)
+            save_runner_context(context)
+            continue
+
+        # === RELEASE TRUST ACTIONS ===
+
+        if action_type == "release.trust.collect_source":
+            execute_release_trust_collect_source(action, context)
+            executed.append(name)
+            save_runner_context(context)
+            continue
+
+        if action_type == "release.trust.resolve_digest":
+            execute_release_trust_resolve_digest(action, context)
+            executed.append(name)
+            save_runner_context(context)
+            continue
+
+        if action_type == "release.trust.generate_sbom":
+            execute_release_trust_generate_sbom(action, context)
+            executed.append(name)
+            save_runner_context(context)
+            continue
+
+        if action_type == "release.trust.sign_image":
+            execute_release_trust_sign_image(action, context)
+            executed.append(name)
+            save_runner_context(context)
+            continue
+
+        if action_type == "release.trust.generate_provenance":
+            execute_release_trust_generate_provenance(action, context)
+            executed.append(name)
+            save_runner_context(context)
+            continue
+
+        if action_type == "release.trust.publish_evidence":
+            execute_release_trust_publish_evidence(action, context)
+            executed.append(name)
+            save_runner_context(context)
+            continue
+
+        if action_type == "release.trust.verify_promotion":
+            execute_release_trust_verify_promotion(action, context)
             executed.append(name)
             save_runner_context(context)
             continue
