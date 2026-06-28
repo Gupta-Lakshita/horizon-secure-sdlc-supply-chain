@@ -1,20 +1,21 @@
 import os
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, Session
 
-# Use SQLite locally, PostgreSQL in production
-_url = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./release_trust.db")
+_url = os.getenv("DATABASE_URL", "sqlite:///./release_trust.db")
 
-# Normalise postgres URLs → keep as-is in prod, SQLite wins locally
-if not _url.startswith("sqlite"):
-    if _url.startswith("postgresql://"):
-        _url = _url.replace("postgresql://", "postgresql+asyncpg://", 1)
-    elif _url.startswith("postgres://"):
-        _url = _url.replace("postgres://", "postgresql+asyncpg://", 1)
+# Normalise postgres URLs for production
+if _url.startswith("postgresql://"):
+    _url = _url.replace("postgresql://", "postgresql+psycopg2://", 1)
+elif _url.startswith("postgres://"):
+    _url = _url.replace("postgres://", "postgresql+psycopg2://", 1)
 
-engine = create_async_engine(_url, echo=False, pool_pre_ping=True)
-AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+engine = create_engine(_url, echo=False, pool_pre_ping=True)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-async def get_db():
-    async with AsyncSessionLocal() as session:
-        yield session
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()

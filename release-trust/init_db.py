@@ -1,10 +1,9 @@
-import asyncio
-from sqlalchemy.ext.asyncio import create_async_engine
-from sqlalchemy import text
+import sqlite3
 
-CREATE_TABLES = """
+conn = sqlite3.connect("release_trust.db")
+conn.executescript("""
 CREATE TABLE IF NOT EXISTS release_trust_runs (
-    id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' || substr(lower(hex(randomblob(2))),2) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) || substr(lower(hex(randomblob(2))),2) || '-' || lower(hex(randomblob(6)))),
+    id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
     client_id TEXT NOT NULL,
     application TEXT NOT NULL,
     release_id TEXT NOT NULL,
@@ -17,7 +16,6 @@ CREATE TABLE IF NOT EXISTS release_trust_runs (
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE (client_id, application, release_id)
 );
-
 CREATE TABLE IF NOT EXISTS release_trust_evidence (
     id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
     release_run_id TEXT NOT NULL REFERENCES release_trust_runs(id),
@@ -30,7 +28,6 @@ CREATE TABLE IF NOT EXISTS release_trust_evidence (
     summary_json TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
-
 CREATE TABLE IF NOT EXISTS release_trust_evaluations (
     id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
     release_run_id TEXT NOT NULL REFERENCES release_trust_runs(id),
@@ -41,7 +38,6 @@ CREATE TABLE IF NOT EXISTS release_trust_evaluations (
     decision TEXT NOT NULL,
     evaluated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
-
 CREATE TABLE IF NOT EXISTS release_trust_rule_results (
     id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
     evaluation_id TEXT NOT NULL REFERENCES release_trust_evaluations(id),
@@ -54,7 +50,6 @@ CREATE TABLE IF NOT EXISTS release_trust_rule_results (
     remediation TEXT,
     exception_eligible INTEGER DEFAULT 1
 );
-
 CREATE TABLE IF NOT EXISTS release_trust_exceptions (
     id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
     release_run_id TEXT NOT NULL REFERENCES release_trust_runs(id),
@@ -71,7 +66,6 @@ CREATE TABLE IF NOT EXISTS release_trust_exceptions (
     status TEXT NOT NULL DEFAULT 'requested',
     revocation_history TEXT DEFAULT '[]'
 );
-
 CREATE TABLE IF NOT EXISTS release_trust_promotions (
     id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
     release_run_id TEXT NOT NULL REFERENCES release_trust_runs(id),
@@ -84,17 +78,7 @@ CREATE TABLE IF NOT EXISTS release_trust_promotions (
     promoted_at TEXT NOT NULL DEFAULT (datetime('now')),
     promoted_by TEXT
 );
-"""
-
-async def init():
-    engine = create_async_engine("sqlite+aiosqlite:///./release_trust.db", echo=True)
-    async with engine.begin() as conn:
-        for statement in CREATE_TABLES.strip().split(";"):
-            s = statement.strip()
-            if s:
-                await conn.execute(text(s))
-    print("Tables created.")
-    await engine.dispose()
-
-if __name__ == "__main__":
-    asyncio.run(init())
+""")
+conn.commit()
+conn.close()
+print("Tables created in release_trust.db")
