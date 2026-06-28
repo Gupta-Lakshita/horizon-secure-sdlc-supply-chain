@@ -8,7 +8,7 @@ Usage:
 
 Purpose:
   Generate SBOM evidence for Horizon product images before granting client pull
-  access. The script prefers Syft SPDX JSON and falls back to Trivy CycloneDX.
+  access. The script prefers Trivy CycloneDX and falls back to Syft CycloneDX.
 
 Examples:
   bash secure_SDLC_Platform/scripts/generate-product-sbom.sh
@@ -45,19 +45,19 @@ generate_one() {
   local safe_component="${component//\//-}"
 
   echo "Generating SBOM for ${image}"
-  if command -v syft >/dev/null 2>&1; then
-    syft packages "${image}" -o spdx-json="${OUTPUT_DIR}/${safe_component}-${tag}.spdx.json"
-    echo "Wrote ${OUTPUT_DIR}/${safe_component}-${tag}.spdx.json"
-    return
-  fi
-
   if command -v trivy >/dev/null 2>&1; then
     trivy image --format cyclonedx --output "${OUTPUT_DIR}/${safe_component}-${tag}.cyclonedx.json" "${image}"
     echo "Wrote ${OUTPUT_DIR}/${safe_component}-${tag}.cyclonedx.json"
     return
   fi
 
-  echo "Neither syft nor trivy is installed. Install one of them to generate SBOM evidence." >&2
+  if command -v syft >/dev/null 2>&1; then
+    syft packages "${image}" -o "cyclonedx-json=${OUTPUT_DIR}/${safe_component}-${tag}.cyclonedx.json"
+    echo "Wrote ${OUTPUT_DIR}/${safe_component}-${tag}.cyclonedx.json"
+    return
+  fi
+
+  echo "Neither trivy nor syft is installed. Install one of them to generate SBOM evidence." >&2
   exit 1
 }
 
