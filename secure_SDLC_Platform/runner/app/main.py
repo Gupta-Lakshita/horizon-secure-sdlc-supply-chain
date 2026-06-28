@@ -2660,7 +2660,62 @@ def execute_release_trust_collect_source(action: Dict[str, Any], context: Dict[s
 
 
 def execute_release_trust_resolve_digest(action: Dict[str, Any], context: Dict[str, Any]) -> None:
-    raise HTTPException(status_code=501, detail="release.trust.resolve_digest: not yet implemented")
+    """After ECR push, resolve and record the immutable image digest."""
+    rendered = render_value(action, context)
+    region = rendered["awsRegion"]
+    role_env = assume_role_env(rendered.get("roleArn", ""), region, f"horizon-rt-digest-{context['requestId']}")
+
+    digest = context.get("image", {}).get("digest")
+    repo = rendered.get("imageRepository") or context.get("image", {}).get("repository", "")
+    tag = rendered.get("imageTag") or context.get("image", {}).get("tag", "")
+
+    if not digest:
+        result = run_command(
+            [
+                "aws", "ecr", "describe-images",
+                "--region", region,
+                "--repository-name", repo,
+                "--image-ids", f"imageTag={tag}",
+                "--query", "imageDetails[0].imageDigest",
+                "--output", "text",
+            ],
+            env=role_env,
+        )
+        digest = result.stdout.strip()
+
+    if not digest or not digest.startswith("sha256:"):
+        raise HTTPException(status_code=422, detail="release.trust.resolve_digest: could not resolve immutable image digest")
+
+    registry = rendered.get("registry") or context.get("image", {}).get("registry", "")
+    application = context_application(context)
+    release_id = rendered.get("releaseId") or context.get("requestId")
+
+    image_doc = {
+        "schemaVersion": "2026-06-image-v1",
+        "clientId": config.client_id,
+        "application": application,
+        "releaseId": release_id,
+        "registry": registry,
+        "repository": repo,
+        "tag": tag,
+        "digest": digest,
+        "imageUriByTag": f"{registry}/{repo}:{tag}",
+        "imageUriByDigest": f"{registry}/{repo}@{digest}",
+        "pushedAt": utc_now().isoformat(),
+        "ImageURI": f"{registry}/{repo}@{digest}",
+        "ImageSHA": digest,
+        "ImageRepo": f"{registry}/{repo}",
+        "ImageTag": tag,
+    }
+
+    bucket = rendered["artifactBucket"]
+    local_path = context["runDir"] / "artifacts" / "image-rt.json"
+    write_json(local_path, image_doc)
+    s3_key = f"release-trust/{application}/{release_id}/image.json"
+    run_command(["aws", "s3", "cp", str(local_path), f"s3://{bucket}/{s3_key}", "--region", region], env=role_env)
+
+    context.setdefault("release_trust", {})["imageDigest"] = digest
+    context["release_trust"]["imageDoc"] = image_doc
 
 
 def execute_release_trust_generate_sbom(action: Dict[str, Any], context: Dict[str, Any]) -> None:
