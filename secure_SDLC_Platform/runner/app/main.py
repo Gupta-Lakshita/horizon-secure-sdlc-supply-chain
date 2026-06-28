@@ -2773,7 +2773,86 @@ def execute_release_trust_generate_provenance(action: Dict[str, Any], context: D
 
 
 def execute_release_trust_publish_evidence(action: Dict[str, Any], context: Dict[str, Any]) -> None:
-    raise HTTPException(status_code=501, detail="release.trust.publish_evidence: not yet implemented")
+    """Create manifest.json with SHA-256 of every evidence file, publish to S3, notify backend."""
+    rendered = render_value(action, context)
+    region = rendered["awsRegion"]
+    bucket = rendered["artifactBucket"]
+    application = context_application(context)
+    release_id = rendered.get("releaseId") or context.get("requestId")
+    role_env = assume_role_env(rendered.get("roleArn", ""), region, f"horizon-rt-manifest-{context['requestId']}")
+
+    rt = context.get("release_trust", {})
+    evidence_prefix = rt.get("evidencePrefix", f"release-trust/{application}/{release_id}")
+
+    summary = {
+        "schemaVersion": "2026-06-ssctp-v1",
+        "clientId": config.client_id,
+        "application": application,
+        "releaseId": release_id,
+        "imageDigest": rt.get("imageDigest"),
+        "evidence": {
+            "sbom": rt.get("sbom", {}).get("status", "missing"),
+            "signature": rt.get("signature", {}).get("status", "missing"),
+            "provenance": rt.get("provenance", {}).get("status", "missing"),
+        },
+        "timestamps": {"createdAt": utc_now().isoformat()},
+    }
+
+    local_artifacts = context["runDir"] / "artifacts"
+    objects = []
+    for file_path in sorted(local_artifacts.rglob("*")):
+        if not file_path.is_file():
+            continue
+        sha = hashlib.sha256(file_path.read_bytes()).hexdigest()
+        rel = str(file_path.relative_to(local_artifacts))
+        objects.append({
+            "path": rel,
+            "sizeBytes": file_path.stat().st_size,
+            "sha256": f"sha256:{sha}",
+            "producer": "horizon-runner",
+            "createdAt": utc_now().isoformat(),
+        })
+
+    manifest = {
+        "schemaVersion": "2026-06-manifest-v1",
+        "bundleRevision": 1,
+        "clientId": config.client_id,
+        "application": application,
+        "releaseId": release_id,
+        "imageDigest": rt.get("imageDigest"),
+        "producer": "horizon-runner",
+        "createdAt": utc_now().isoformat(),
+        "objects": objects,
+    }
+
+    for filename, doc in [("release-trust-summary.json", summary), ("manifest.json", manifest)]:
+        local_path = local_artifacts / filename
+        write_json(local_path, doc)
+        run_command(
+            ["aws", "s3", "cp", str(local_path), f"s3://{bucket}/{evidence_prefix}/{filename}", "--region", region],
+            env=role_env,
+        )
+
+    manifest_bytes = (local_artifacts / "manifest.json").read_bytes()
+    manifest_sha = f"sha256:{hashlib.sha256(manifest_bytes).hexdigest()}"
+
+    backend_url = rendered.get("releaseTrustBackendUrl") or os.getenv("RELEASE_TRUST_BACKEND_URL", "")
+    if backend_url:
+        try:
+            requests.post(
+                f"{backend_url}/pipeline/api/release-trust/runs/{release_id}/evidence",
+                json={
+                    "manifestS3Key": f"{evidence_prefix}/manifest.json",
+                    "manifestSha256": manifest_sha,
+                    "imageDigest": rt.get("imageDigest"),
+                },
+                headers={"X-Client-Id": config.client_id},
+                timeout=30,
+            )
+        except requests.RequestException as exc:
+            print(f"Warning: release trust backend notification failed: {exc}", flush=True)
+
+    context["release_trust"]["manifestSha256"] = manifest_sha
 
 
 def execute_release_trust_verify_promotion(action: Dict[str, Any], context: Dict[str, Any]) -> None:
