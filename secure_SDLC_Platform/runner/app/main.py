@@ -1905,6 +1905,7 @@ def default_policy_bundles() -> List[Dict[str, Any]]:
     return [
         {"name": "horizon-baseline", "version": "1.0.0", "ref": "horizon-baseline@1.0.0", "source": "runner-fallback"},
         {"name": "horizon-kubernetes-restricted-lite", "version": "1.0.0", "ref": "horizon-kubernetes-restricted-lite@1.0.0", "source": "runner-fallback"},
+        {"name": "horizon-release-trust", "version": "1.0.0", "ref": "horizon-release-trust@1.0.0", "source": "runner-fallback"},
     ]
 
 
@@ -2765,11 +2766,171 @@ def execute_release_trust_generate_sbom(action: Dict[str, Any], context: Dict[st
 
 
 def execute_release_trust_sign_image(action: Dict[str, Any], context: Dict[str, Any]) -> None:
-    raise HTTPException(status_code=501, detail="release.trust.sign_image: not yet implemented")
+    """Sign the release image by immutable digest using Cosign + KMS key."""
+    rendered = render_value(action, context)
+    region = rendered["awsRegion"]
+    bucket = rendered["artifactBucket"]
+    application = context_application(context)
+    release_id = rendered.get("releaseId") or context.get("requestId")
+
+    digest = context.get("release_trust", {}).get("imageDigest")
+    if not digest:
+        raise HTTPException(
+            status_code=422,
+            detail="release.trust.sign_image: imageDigest not in context — run resolve_digest first",
+        )
+
+    image_uri = context["release_trust"]["imageDoc"]["imageUriByDigest"]
+    kms_key_id = rendered.get("kmsSigningKeyId") or os.getenv("HORIZON_KMS_SIGNING_KEY_ID", "")
+    signing_role_arn = rendered.get("signingRoleArn") or os.getenv("HORIZON_SIGNING_ROLE_ARN", "")
+
+    if not kms_key_id:
+        context.setdefault("release_trust", {})["signature"] = {
+            "status": "skipped",
+            "reason": "no KMS signing key configured",
+        }
+        return
+
+    # Use separate signing role (must not be the same as the deploy/runner role)
+    sign_env = assume_role_env(signing_role_arn, region, f"horizon-rt-sign-{context['requestId']}")
+    key_ref = kms_key_id if kms_key_id.startswith("awskms:") else f"awskms:///{kms_key_id}"
+
+    result = run_command(
+        ["cosign", "sign", "--yes", "--key", key_ref, image_uri],
+        env=sign_env,
+        check=False,
+    )
+    status = "valid" if result.returncode == 0 else "error"
+
+    sig_doc = {
+        "schemaVersion": "2026-06-signature-v1",
+        "clientId": config.client_id,
+        "application": application,
+        "releaseId": release_id,
+        "imageDigest": digest,
+        "imageUri": image_uri,
+        "keyRef": key_ref,
+        "status": status,
+        "signedAt": utc_now().isoformat(),
+        "exitCode": result.returncode,
+    }
+
+    local_path = context["runDir"] / "artifacts" / "signature.json"
+    write_json(local_path, sig_doc)
+
+    role_env = assume_role_env(rendered.get("roleArn", ""), region, f"horizon-rt-sig-up-{context['requestId']}")
+    s3_key = f"release-trust/{application}/{release_id}/signature.json"
+    run_command(
+        ["aws", "s3", "cp", str(local_path), f"s3://{bucket}/{s3_key}", "--region", region],
+        env=role_env,
+    )
+
+    context.setdefault("release_trust", {})["signature"] = {"status": status, "s3Key": s3_key}
+    if status == "error":
+        raise HTTPException(status_code=500, detail="release.trust.sign_image: cosign signing failed")
 
 
 def execute_release_trust_generate_provenance(action: Dict[str, Any], context: Dict[str, Any]) -> None:
-    raise HTTPException(status_code=501, detail="release.trust.generate_provenance: not yet implemented")
+    """Attach a SLSA provenance attestation to the release image using Cosign + KMS key."""
+    rendered = render_value(action, context)
+    region = rendered["awsRegion"]
+    bucket = rendered["artifactBucket"]
+    application = context_application(context)
+    release_id = rendered.get("releaseId") or context.get("requestId")
+
+    digest = context.get("release_trust", {}).get("imageDigest")
+    if not digest:
+        raise HTTPException(
+            status_code=422,
+            detail="release.trust.generate_provenance: imageDigest not in context — run resolve_digest first",
+        )
+
+    image_uri = context["release_trust"]["imageDoc"]["imageUriByDigest"]
+    kms_key_id = rendered.get("kmsSigningKeyId") or os.getenv("HORIZON_KMS_SIGNING_KEY_ID", "")
+    signing_role_arn = rendered.get("signingRoleArn") or os.getenv("HORIZON_SIGNING_ROLE_ARN", "")
+
+    if not kms_key_id:
+        context.setdefault("release_trust", {})["provenance"] = {
+            "status": "skipped",
+            "reason": "no KMS signing key configured",
+        }
+        return
+
+    rt = context.get("release_trust", {})
+    source = rt.get("source", {})
+
+    predicate = {
+        "builder": {"id": "https://horizonrelevance.com/horizon-runner/v1"},
+        "buildType": "https://horizonrelevance.com/horizon-runner/build/v1",
+        "invocation": {
+            "configSource": {
+                "uri": source.get("repositoryUrl", ""),
+                "digest": {"sha1": source.get("commitSha", "")},
+                "entryPoint": "horizon-runner",
+            },
+            "parameters": {
+                "application": application,
+                "releaseId": release_id,
+                "targetEnv": rendered.get("targetEnv", ""),
+            },
+        },
+        "buildConfig": {},
+        "metadata": {
+            "buildStartedOn": source.get("checkoutAt", utc_now().isoformat()),
+            "buildFinishedOn": utc_now().isoformat(),
+            "completeness": {"parameters": True, "environment": False, "materials": False},
+            "reproducible": False,
+        },
+        "materials": [
+            {
+                "uri": source.get("repositoryUrl", ""),
+                "digest": {"sha1": source.get("commitSha", "")},
+            }
+        ],
+    }
+
+    local_predicate = context["runDir"] / "artifacts" / "provenance-predicate.json"
+    write_json(local_predicate, predicate)
+
+    sign_env = assume_role_env(signing_role_arn, region, f"horizon-rt-prov-{context['requestId']}")
+    key_ref = kms_key_id if kms_key_id.startswith("awskms:") else f"awskms:///{kms_key_id}"
+
+    result = run_command(
+        [
+            "cosign", "attest", "--yes", "--key", key_ref,
+            "--predicate", str(local_predicate), "--type", "slsaprovenance", image_uri,
+        ],
+        env=sign_env,
+        check=False,
+    )
+    status = "valid" if result.returncode == 0 else "error"
+
+    prov_doc = {
+        "schemaVersion": "2026-06-provenance-v1",
+        "clientId": config.client_id,
+        "application": application,
+        "releaseId": release_id,
+        "imageDigest": digest,
+        "imageUri": image_uri,
+        "keyRef": key_ref,
+        "status": status,
+        "attestedAt": utc_now().isoformat(),
+        "predicate": predicate,
+    }
+
+    local_prov = context["runDir"] / "artifacts" / "provenance.json"
+    write_json(local_prov, prov_doc)
+
+    role_env = assume_role_env(rendered.get("roleArn", ""), region, f"horizon-rt-prov-up-{context['requestId']}")
+    s3_key = f"release-trust/{application}/{release_id}/provenance.json"
+    run_command(
+        ["aws", "s3", "cp", str(local_prov), f"s3://{bucket}/{s3_key}", "--region", region],
+        env=role_env,
+    )
+
+    context.setdefault("release_trust", {})["provenance"] = {"status": status, "s3Key": s3_key}
+    if status == "error":
+        raise HTTPException(status_code=500, detail="release.trust.generate_provenance: cosign attest failed")
 
 
 def execute_release_trust_publish_evidence(action: Dict[str, Any], context: Dict[str, Any]) -> None:
@@ -2856,7 +3017,50 @@ def execute_release_trust_publish_evidence(action: Dict[str, Any], context: Dict
 
 
 def execute_release_trust_verify_promotion(action: Dict[str, Any], context: Dict[str, Any]) -> None:
-    raise HTTPException(status_code=501, detail="release.trust.verify_promotion: not yet implemented")
+    """Verify that the deployed image digest matches the approved digest and optionally verify cosign signature."""
+    rendered = render_value(action, context)
+    region = rendered["awsRegion"]
+
+    rt = context.get("release_trust", {})
+    approved_digest = rt.get("imageDigest")
+    deployed_digest = (
+        rendered.get("deployedDigest")
+        or context.get("image", {}).get("digest")
+        or context.get("release", {}).get("sourceImageDigest")
+    )
+
+    violations: List[str] = []
+
+    if approved_digest and deployed_digest and approved_digest != deployed_digest:
+        violations.append(
+            f"HR-POL-RT-006 deployed digest {deployed_digest} does not match approved digest {approved_digest}"
+        )
+
+    # Optionally verify cosign signature
+    image_doc = rt.get("imageDoc", {})
+    image_uri = image_doc.get("imageUriByDigest") or deployed_digest
+    kms_key_id = rendered.get("kmsSigningKeyId") or os.getenv("HORIZON_KMS_SIGNING_KEY_ID", "")
+    if kms_key_id and image_uri and not violations:
+        signing_role_arn = rendered.get("signingRoleArn") or os.getenv("HORIZON_SIGNING_ROLE_ARN", "")
+        sign_env = assume_role_env(signing_role_arn, region, f"horizon-rt-verify-{context['requestId']}")
+        key_ref = kms_key_id if kms_key_id.startswith("awskms:") else f"awskms:///{kms_key_id}"
+        verify_result = run_command(
+            ["cosign", "verify", "--key", key_ref, image_uri],
+            env=sign_env,
+            check=False,
+        )
+        if verify_result.returncode != 0:
+            violations.append("HR-POL-RT-003 cosign signature verification failed for deployed image")
+
+    if violations:
+        raise HTTPException(status_code=422, detail="; ".join(violations))
+
+    context.setdefault("release_trust", {})["promotionVerification"] = {
+        "status": "verified",
+        "approvedDigest": approved_digest,
+        "deployedDigest": deployed_digest,
+        "verifiedAt": utc_now().isoformat(),
+    }
 
 
 STAGE_ALIASES = {

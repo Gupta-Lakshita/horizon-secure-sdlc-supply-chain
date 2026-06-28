@@ -252,6 +252,9 @@ components:
     securityFailOnDashboardUpload: false
     policyBundleMode: managed
     policyBundleDir: /app/app/policy_bundles
+    releaseTrustEnabled: false
+    releaseTrustBackendUrl: "http://horizon-release-trust:8001"
+    signingRoleArn: ""
   sonarqube:
     enabled: true
     image: 426946630837.dkr.ecr.us-east-1.amazonaws.com/horizon/sonarqube:10.4-community
@@ -265,6 +268,18 @@ components:
     enabled: false
   keycloak:
     enabled: true
+  releaseTrust:
+    enabled: false
+    image: ""
+    imagePullPolicy: Always
+    replicas: 1
+    containerPort: 8001
+    servicePort: 8001
+    dbSecretName: horizon-release-trust-db
+    dbSecretKey: url
+    artifactBucket: ""
+    awsRegion: us-east-1
+    serviceAccountName: horizon-backend
 
 existingInfrastructure:
   ingressClassName: nginx

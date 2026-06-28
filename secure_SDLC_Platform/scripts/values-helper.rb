@@ -488,7 +488,13 @@ def catalog_entry_from_environment(values, env, terraform_outputs = {})
     namespace_strategy: first_present(namespace["strategy"], "per-app"),
     namespace_template: first_present(terraform_output(terraform_outputs, "namespace_name"), namespace["template"]),
     sns_topic_arn: first_present(dig_path(runtime, "snsTopicArn"), dig_path(values, "sharedServices.notifications.topicArn"), ""),
-    is_active: runtime.key?("isDeployable") ? runtime["isDeployable"] != false : true
+    is_active: runtime.key?("isDeployable") ? runtime["isDeployable"] != false : true,
+    signing_role_arn: first_present(dig_path(env, "iam.signingRole.roleArn"), ""),
+    kms_signing_key_id: first_present(dig_path(env, "foundation.kms.signingKeyId"), dig_path(env, "foundation.kms.keyArn"), ""),
+    release_trust_backend_url: first_present(dig_path(env, "releaseTrust.backendUrl"), "http://horizon-release-trust:8001"),
+    requires_approval: env.fetch("requiresApproval", false),
+    requires_signature: first_present(dig_path(env, "releaseTrust.requiresSignature"), env["accountTier"] == "prod"),
+    requires_provenance: first_present(dig_path(env, "releaseTrust.requiresProvenance"), env["accountTier"] == "prod")
   }
 end
 
@@ -511,7 +517,13 @@ def catalog_entry_from_explicit(entry)
     namespace_strategy: first_present(key_value(entry, "namespace_strategy", "namespaceStrategy"), "per-app"),
     namespace_template: key_value(entry, "namespace_template", "namespaceTemplate"),
     sns_topic_arn: first_present(key_value(entry, "sns_topic_arn", "snsTopicArn"), ""),
-    is_active: active.nil? ? true : active != false
+    is_active: active.nil? ? true : active != false,
+    signing_role_arn: first_present(key_value(entry, "signing_role_arn", "signingRoleArn"), ""),
+    kms_signing_key_id: first_present(key_value(entry, "kms_signing_key_id", "kmsSigningKeyId"), ""),
+    release_trust_backend_url: first_present(key_value(entry, "release_trust_backend_url", "releaseTrustBackendUrl"), ""),
+    requires_approval: key_value(entry, "requires_approval", "requiresApproval") || false,
+    requires_signature: key_value(entry, "requires_signature", "requiresSignature") || false,
+    requires_provenance: key_value(entry, "requires_provenance", "requiresProvenance") || false
   }
 end
 
