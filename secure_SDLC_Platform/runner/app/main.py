@@ -2719,7 +2719,49 @@ def execute_release_trust_resolve_digest(action: Dict[str, Any], context: Dict[s
 
 
 def execute_release_trust_generate_sbom(action: Dict[str, Any], context: Dict[str, Any]) -> None:
-    raise HTTPException(status_code=501, detail="release.trust.generate_sbom: not yet implemented")
+    """Generate CycloneDX SBOM for the resolved image digest."""
+    rendered = render_value(action, context)
+    region = rendered["awsRegion"]
+    bucket = rendered["artifactBucket"]
+    application = context_application(context)
+    release_id = rendered.get("releaseId") or context.get("requestId")
+    role_env = assume_role_env(rendered.get("roleArn", ""), region, f"horizon-rt-sbom-{context['requestId']}")
+
+    digest = context.get("release_trust", {}).get("imageDigest")
+    if not digest:
+        raise HTTPException(
+            status_code=422,
+            detail="release.trust.generate_sbom: imageDigest not in context — run resolve_digest first",
+        )
+
+    image_uri = context["release_trust"]["imageDoc"]["imageUriByDigest"]
+    report_dir = context["runDir"] / "artifacts" / "sbom"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    sbom_path = report_dir / "sbom.cyclonedx.json"
+
+    status = "NOT_RUN"
+    if shutil.which("trivy"):
+        trivy_cmd = ["trivy", "image", "--format", "cyclonedx", "--output", str(sbom_path), image_uri]
+        result = run_command(trivy_cmd, env=role_env, check=False)
+        status = "COMPLETED" if result.returncode in {0, 1} else "ERROR"
+    elif shutil.which("syft"):
+        syft_cmd = ["syft", "packages", image_uri, "-o", f"cyclonedx-json={sbom_path}"]
+        result = run_command(syft_cmd, env=role_env, check=False)
+        status = "COMPLETED" if result.returncode == 0 else "ERROR"
+    else:
+        status = "TOOL_NOT_AVAILABLE"
+
+    if status == "COMPLETED" and sbom_path.exists():
+        s3_key = f"release-trust/{application}/{release_id}/sbom/sbom.cyclonedx.json"
+        run_command(
+            ["aws", "s3", "cp", str(sbom_path), f"s3://{bucket}/{s3_key}", "--region", region],
+            env=role_env,
+        )
+        context.setdefault("release_trust", {})["sbom"] = {"status": "present", "s3Key": s3_key}
+    else:
+        context.setdefault("release_trust", {})["sbom"] = {
+            "status": "missing" if status == "TOOL_NOT_AVAILABLE" else "error",
+        }
 
 
 def execute_release_trust_sign_image(action: Dict[str, Any], context: Dict[str, Any]) -> None:
