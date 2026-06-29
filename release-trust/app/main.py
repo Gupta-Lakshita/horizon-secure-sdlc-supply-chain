@@ -1,15 +1,7 @@
-from fastapi import FastAPI, Header, HTTPException
-from typing import Optional
-import os
+from fastapi import FastAPI
+from app.deps import get_client_id  # re-export for backwards compat
 
 app = FastAPI(title="Horizon Release Trust Service", version="1.0.0")
-
-
-def get_client_id(x_client_id: str = Header(...)) -> str:
-    """Client ID always from header (set by runner from config.client_id). Never from body."""
-    if not x_client_id:
-        raise HTTPException(status_code=401, detail="X-Client-Id header required")
-    return x_client_id
 
 
 @app.get("/healthz")
