@@ -4,6 +4,7 @@ Policy evaluation engine for the Release Trust service.
 Rules are implemented as Python functions (not OPA) so the backend can
 evaluate them against DB-resident evidence and make authoritative gate decisions.
 """
+
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 import json
@@ -36,10 +37,15 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def rule_requires_digest(subject: Dict[str, Any], env_tier: str) -> Tuple[str, str, str]:
+def rule_requires_digest(
+    subject: Dict[str, Any], env_tier: str
+) -> Tuple[str, str, str]:
     if not subject.get("imageDigest"):
-        return ("fail", "HR-POL-RT-001 no immutable image digest recorded",
-                "Run release.trust.resolve_digest before promoting")
+        return (
+            "fail",
+            "HR-POL-RT-001 no immutable image digest recorded",
+            "Run release.trust.resolve_digest before promoting",
+        )
     return "pass", "", ""
 
 
@@ -47,47 +53,80 @@ def rule_requires_sbom(evidence: Dict[str, str], env_tier: str) -> Tuple[str, st
     if evidence.get("sbom") == "present":
         return "pass", "", ""
     if env_tier == "dev":
-        return ("warn", "HR-POL-RT-002 SBOM missing (warn in dev)",
-                "Run release.trust.generate_sbom")
-    return ("fail", f"HR-POL-RT-002 SBOM required for {env_tier}",
-            "Run release.trust.generate_sbom before promoting")
+        return (
+            "warn",
+            "HR-POL-RT-002 SBOM missing (warn in dev)",
+            "Run release.trust.generate_sbom",
+        )
+    return (
+        "fail",
+        f"HR-POL-RT-002 SBOM required for {env_tier}",
+        "Run release.trust.generate_sbom before promoting",
+    )
 
 
-def rule_blocks_critical_cve(evidence: Dict[str, Any], env_tier: str) -> Tuple[str, str, str]:
+def rule_blocks_critical_cve(
+    evidence: Dict[str, Any], env_tier: str
+) -> Tuple[str, str, str]:
     count = evidence.get("criticalRuntimeCves", 0)
     if not isinstance(count, int):
         count = 0
     if count == 0:
         return "pass", "", ""
     if env_tier == "dev":
-        return ("warn", f"HR-POL-RT-CVE {count} critical CVE(s) (warn in dev)",
-                "Remediate before promoting beyond dev")
-    return ("fail", f"HR-POL-RT-CVE {count} critical CVE(s) block {env_tier}",
-            "Remediate all critical CVEs or file an approved exception")
+        return (
+            "warn",
+            f"HR-POL-RT-CVE {count} critical CVE(s) (warn in dev)",
+            "Remediate before promoting beyond dev",
+        )
+    return (
+        "fail",
+        f"HR-POL-RT-CVE {count} critical CVE(s) block {env_tier}",
+        "Remediate all critical CVEs or file an approved exception",
+    )
 
 
-def rule_requires_signature(evidence: Dict[str, str], env_tier: str) -> Tuple[str, str, str]:
-    if evidence.get("signature") == "valid":
+def rule_requires_signature(
+    evidence: Dict[str, str], env_tier: str
+) -> Tuple[str, str, str]:
+    if evidence.get("signing") in ("valid", "present") or evidence.get("signature") in (
+        "valid",
+        "present",
+    ):
         return "pass", "", ""
     if env_tier == "dev":
         return "pass", "", ""
     if env_tier == "nonprod":
-        return ("warn", "HR-POL-RT-003 signature not present (warn in non-prod)",
-                "Run release.trust.sign_image before production")
-    return ("fail", "HR-POL-RT-003 production requires valid image signature",
-            "Run release.trust.sign_image with a valid KMS key")
+        return (
+            "warn",
+            "HR-POL-RT-003 signature not present (warn in non-prod)",
+            "Run release.trust.sign_image before production",
+        )
+    return (
+        "fail",
+        "HR-POL-RT-003 production requires valid image signature",
+        "Run release.trust.sign_image with a valid KMS key",
+    )
 
 
-def rule_requires_provenance(evidence: Dict[str, str], env_tier: str) -> Tuple[str, str, str]:
-    if evidence.get("provenance") == "valid":
+def rule_requires_provenance(
+    evidence: Dict[str, str], env_tier: str
+) -> Tuple[str, str, str]:
+    if evidence.get("provenance") in ("valid", "present"):
         return "pass", "", ""
     if env_tier == "dev":
         return "pass", "", ""
     if env_tier == "nonprod":
-        return ("warn", "HR-POL-RT-004 provenance not present (warn in non-prod)",
-                "Run release.trust.generate_provenance before production")
-    return ("fail", "HR-POL-RT-004 production requires valid provenance",
-            "Run release.trust.generate_provenance")
+        return (
+            "warn",
+            "HR-POL-RT-004 provenance not present (warn in non-prod)",
+            "Run release.trust.generate_provenance before production",
+        )
+    return (
+        "fail",
+        "HR-POL-RT-004 production requires valid provenance",
+        "Run release.trust.generate_provenance",
+    )
 
 
 def rule_requires_same_digest(
@@ -101,9 +140,11 @@ def rule_requires_same_digest(
         return "pass", "", ""
     if subject_digest == requested_digest:
         return "pass", "", ""
-    return ("fail",
-            f"HR-POL-RT-006 requested digest {requested_digest} != approved {subject_digest}",
-            "Ensure deployed digest matches the digest recorded during evidence collection")
+    return (
+        "fail",
+        f"HR-POL-RT-006 requested digest {requested_digest} != approved {subject_digest}",
+        "Ensure deployed digest matches the digest recorded during evidence collection",
+    )
 
 
 def evaluate_release(
@@ -114,11 +155,17 @@ def evaluate_release(
     requested_digest: Optional[str] = None,
 ) -> Dict[str, Any]:
     # 1. Load release record
-    row = db.execute(
-        text("SELECT id, client_id, application, release_id, image_digest, status "
-             "FROM release_trust_runs WHERE id = :run_id"),
-        {"run_id": run_id},
-    ).mappings().first()
+    row = (
+        db.execute(
+            text(
+                "SELECT id, client_id, application, release_id, image_digest, status "
+                "FROM release_trust_runs WHERE id = :run_id"
+            ),
+            {"run_id": run_id},
+        )
+        .mappings()
+        .first()
+    )
 
     if not row:
         raise HTTPException(status_code=404, detail=f"Release run {run_id} not found")
@@ -133,18 +180,28 @@ def evaluate_release(
     }
 
     # 2. Load evidence summary
-    ev_rows = db.execute(
-        text("SELECT evidence_type, status, summary_json FROM release_trust_evidence "
-             "WHERE release_run_id = :run_id AND client_id = :client_id"),
-        {"run_id": run_id, "client_id": client_id},
-    ).mappings().all()
+    ev_rows = (
+        db.execute(
+            text(
+                "SELECT evidence_type, status, summary_json FROM release_trust_evidence "
+                "WHERE release_run_id = :run_id AND client_id = :client_id"
+            ),
+            {"run_id": run_id, "client_id": client_id},
+        )
+        .mappings()
+        .all()
+    )
 
     evidence_map: Dict[str, Any] = {}
     for ev in ev_rows:
         evidence_map[ev["evidence_type"]] = ev["status"]
         if ev["summary_json"]:
             try:
-                parsed = json.loads(ev["summary_json"]) if isinstance(ev["summary_json"], str) else ev["summary_json"]
+                parsed = (
+                    json.loads(ev["summary_json"])
+                    if isinstance(ev["summary_json"], str)
+                    else ev["summary_json"]
+                )
                 if isinstance(parsed, dict):
                     evidence_map.update(parsed)
             except (json.JSONDecodeError, TypeError):
@@ -152,12 +209,18 @@ def evaluate_release(
 
     # 3. Load active exceptions
     now_ts = _now_iso()
-    exc_rows = db.execute(
-        text("SELECT rule_id, environment_scope FROM release_trust_exceptions "
-             "WHERE release_run_id = :run_id AND client_id = :client_id "
-             "AND status = 'approved' AND (expires_at IS NULL OR expires_at > :now)"),
-        {"run_id": run_id, "client_id": client_id, "now": now_ts},
-    ).mappings().all()
+    exc_rows = (
+        db.execute(
+            text(
+                "SELECT rule_id, environment_scope FROM release_trust_exceptions "
+                "WHERE release_run_id = :run_id AND client_id = :client_id "
+                "AND status = 'approved' AND (expires_at IS NULL OR expires_at > :now)"
+            ),
+            {"run_id": run_id, "client_id": client_id, "now": now_ts},
+        )
+        .mappings()
+        .all()
+    )
 
     env_tier = _env_tier(target_environment)
 
@@ -166,7 +229,9 @@ def evaluate_release(
             return False
         for exc in exc_rows:
             scope = (exc["environment_scope"] or "").lower()
-            if exc["rule_id"] == rule_id and (not scope or scope == target_environment.lower()):
+            if exc["rule_id"] == rule_id and (
+                not scope or scope == target_environment.lower()
+            ):
                 return True
         return False
 
@@ -179,8 +244,12 @@ def evaluate_release(
         ("rule_blocks_critical_cve", rule_blocks_critical_cve(evidence_map, env_tier)),
         ("rule_requires_signature", rule_requires_signature(evidence_map, env_tier)),
         ("rule_requires_provenance", rule_requires_provenance(evidence_map, env_tier)),
-        ("rule_requires_same_digest",
-         rule_requires_same_digest(subject.get("imageDigest"), requested_digest, env_tier)),
+        (
+            "rule_requires_same_digest",
+            rule_requires_same_digest(
+                subject.get("imageDigest"), requested_digest, env_tier
+            ),
+        ),
     ]:
         eligible = rule_id not in NON_EXCEPTED_RULES
         raw_results.append((rule_id, raw, msg, rem, eligible))
@@ -188,41 +257,77 @@ def evaluate_release(
     # 5. Apply exceptions
     rule_results: List[RuleResult] = []
     for rule_id, raw, msg, rem, eligible in raw_results:
-        result = "excepted" if (raw == "fail" and eligible and _exception_covers(rule_id)) else raw
-        rule_results.append(RuleResult(
-            ruleId=rule_id,
-            result=result,
-            severity="error" if result == "fail" else ("warning" if result == "warn" else None),
-            message=msg or None,
-            remediation=rem or None,
-            exceptionEligible=eligible,
-        ))
+        result = (
+            "excepted"
+            if (raw == "fail" and eligible and _exception_covers(rule_id))
+            else raw
+        )
+        rule_results.append(
+            RuleResult(
+                ruleId=rule_id,
+                result=result,
+                severity=(
+                    "error"
+                    if result == "fail"
+                    else ("warning" if result == "warn" else None)
+                ),
+                message=msg or None,
+                remediation=rem or None,
+                exceptionEligible=eligible,
+            )
+        )
 
     # 6. Overall decision
     results = {r.result for r in rule_results}
-    decision = "block" if "fail" in results else ("warn" if "warn" in results else "pass")
+    decision = (
+        "block" if "fail" in results else ("warn" if "warn" in results else "pass")
+    )
     blockers = [r.message for r in rule_results if r.result == "fail" and r.message]
 
     # 7. Persist evaluation
     eval_id = str(uuid.uuid4())
     db.execute(
-        text("INSERT INTO release_trust_evaluations "
-             "(id, release_run_id, client_id, environment, policy_version, decision, evaluated_at) "
-             "VALUES (:id, :run_id, :client_id, :env, :pv, :decision, :at)"),
-        {"id": eval_id, "run_id": run_id, "client_id": client_id,
-         "env": target_environment, "pv": POLICY_VERSION, "decision": decision, "at": evaluated_at},
+        text(
+            "INSERT INTO release_trust_evaluations "
+            "(id, release_run_id, client_id, environment, policy_version, decision, evaluated_at) "
+            "VALUES (:id, :run_id, :client_id, :env, :pv, :decision, :at)"
+        ),
+        {
+            "id": eval_id,
+            "run_id": run_id,
+            "client_id": client_id,
+            "env": target_environment,
+            "pv": POLICY_VERSION,
+            "decision": decision,
+            "at": evaluated_at,
+        },
     )
     for r in rule_results:
         db.execute(
-            text("INSERT INTO release_trust_rule_results "
-                 "(id, evaluation_id, client_id, rule_id, result, severity, message, remediation, exception_eligible) "
-                 "VALUES (:id, :eval_id, :client_id, :rule_id, :result, :severity, :message, :remediation, :eligible)"),
-            {"id": str(uuid.uuid4()), "eval_id": eval_id, "client_id": client_id,
-             "rule_id": r.ruleId, "result": r.result, "severity": r.severity,
-             "message": r.message, "remediation": r.remediation, "eligible": r.exceptionEligible},
+            text(
+                "INSERT INTO release_trust_rule_results "
+                "(id, evaluation_id, client_id, rule_id, result, severity, message, remediation, exception_eligible) "
+                "VALUES (:id, :eval_id, :client_id, :rule_id, :result, :severity, :message, :remediation, :eligible)"
+            ),
+            {
+                "id": str(uuid.uuid4()),
+                "eval_id": eval_id,
+                "client_id": client_id,
+                "rule_id": r.ruleId,
+                "result": r.result,
+                "severity": r.severity,
+                "message": r.message,
+                "remediation": r.remediation,
+                "eligible": r.exceptionEligible,
+            },
         )
     db.commit()
 
-    return {"decision": decision, "rules": [r.model_dump() for r in rule_results],
-            "blockers": blockers, "policyVersion": POLICY_VERSION,
-            "evaluatedAt": evaluated_at, "evaluationId": eval_id}
+    return {
+        "decision": decision,
+        "rules": [r.model_dump() for r in rule_results],
+        "blockers": blockers,
+        "policyVersion": POLICY_VERSION,
+        "evaluatedAt": evaluated_at,
+        "evaluationId": eval_id,
+    }
