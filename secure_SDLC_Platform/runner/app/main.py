@@ -1547,6 +1547,20 @@ def context_application(context: Dict[str, Any]) -> str:
     )
 
 
+def canonical_release_id(rendered: Dict[str, Any], context: Dict[str, Any]) -> str:
+    """Use the backend-created ID; never derive an independent runner ID."""
+    payload = context.get("requestPayload") or {}
+    release_id = (
+        rendered.get("releaseId")
+        or payload.get("RELEASE_TRUST_RELEASE_ID")
+        or payload.get("releaseTrustReleaseId")
+        or context.get("release_trust", {}).get("releaseId")
+    )
+    if not release_id:
+        raise HTTPException(status_code=422, detail="Release Trust action requires RELEASE_TRUST_RELEASE_ID")
+    return str(release_id)
+
+
 def context_requested_by(context: Dict[str, Any]) -> str:
     payload = context.get("requestPayload") or {}
     return str(payload.get("REQUESTED_BY") or payload.get("requestedBy") or payload.get("requesterEmail") or "")
@@ -2624,7 +2638,7 @@ def execute_release_trust_collect_source(action: Dict[str, Any], context: Dict[s
     region = rendered["awsRegion"]
     bucket = rendered["artifactBucket"]
     application = context_application(context)
-    release_id = rendered.get("releaseId") or context.get("requestId")
+    release_id = canonical_release_id(rendered, context)
 
     git = context.get("git") or {}
     commit_sha = git.get("commitSha") or rendered.get("commitSha")
@@ -2689,7 +2703,7 @@ def execute_release_trust_resolve_digest(action: Dict[str, Any], context: Dict[s
 
     registry = rendered.get("registry") or context.get("image", {}).get("registry", "")
     application = context_application(context)
-    release_id = rendered.get("releaseId") or context.get("requestId")
+    release_id = canonical_release_id(rendered, context)
 
     image_doc = {
         "schemaVersion": "2026-06-image-v1",
@@ -2725,7 +2739,7 @@ def execute_release_trust_generate_sbom(action: Dict[str, Any], context: Dict[st
     region = rendered["awsRegion"]
     bucket = rendered["artifactBucket"]
     application = context_application(context)
-    release_id = rendered.get("releaseId") or context.get("requestId")
+    release_id = canonical_release_id(rendered, context)
     role_env = assume_role_env(rendered.get("roleArn", ""), region, f"horizon-rt-sbom-{context['requestId']}")
 
     digest = context.get("release_trust", {}).get("imageDigest")
@@ -2771,7 +2785,7 @@ def execute_release_trust_sign_image(action: Dict[str, Any], context: Dict[str, 
     region = rendered["awsRegion"]
     bucket = rendered["artifactBucket"]
     application = context_application(context)
-    release_id = rendered.get("releaseId") or context.get("requestId")
+    release_id = canonical_release_id(rendered, context)
 
     digest = context.get("release_trust", {}).get("imageDigest")
     if not digest:
@@ -2836,7 +2850,7 @@ def execute_release_trust_generate_provenance(action: Dict[str, Any], context: D
     region = rendered["awsRegion"]
     bucket = rendered["artifactBucket"]
     application = context_application(context)
-    release_id = rendered.get("releaseId") or context.get("requestId")
+    release_id = canonical_release_id(rendered, context)
 
     digest = context.get("release_trust", {}).get("imageDigest")
     if not digest:
@@ -2939,7 +2953,7 @@ def execute_release_trust_publish_evidence(action: Dict[str, Any], context: Dict
     region = rendered["awsRegion"]
     bucket = rendered["artifactBucket"]
     application = context_application(context)
-    release_id = rendered.get("releaseId") or context.get("requestId")
+    release_id = canonical_release_id(rendered, context)
     role_env = assume_role_env(rendered.get("roleArn", ""), region, f"horizon-rt-manifest-{context['requestId']}")
 
     rt = context.get("release_trust", {})
@@ -2997,21 +3011,43 @@ def execute_release_trust_publish_evidence(action: Dict[str, Any], context: Dict
     manifest_bytes = (local_artifacts / "manifest.json").read_bytes()
     manifest_sha = f"sha256:{hashlib.sha256(manifest_bytes).hexdigest()}"
 
-    backend_url = rendered.get("releaseTrustBackendUrl") or os.getenv("RELEASE_TRUST_BACKEND_URL", "")
+    backend_url = rendered.get("releaseTrustBackendUrl") or os.getenv("HORIZON_RELEASE_TRUST_BACKEND_URL", "")
     if backend_url:
+        def evidence_document(status: str, key: str, **extra: Any) -> Dict[str, Any]:
+            return {"status": status, "reference": f"s3://{bucket}/{key}", "checksum": manifest_sha, **extra}
+        scan_files = list(local_artifacts.rglob("*findings*.json"))
+        critical = high = 0
+        for scan_file in scan_files:
+            try:
+                for finding in json.loads(scan_file.read_text()):
+                    severity = str(finding.get("severity", "")).upper()
+                    critical += severity == "CRITICAL"
+                    high += severity == "HIGH"
+            except (OSError, ValueError, TypeError):
+                continue
+        scan_status = "generated" if scan_files else "missing"
+        completion = {
+            "commit_sha": (rt.get("source") or {}).get("commitSha", ""),
+            "image_digest": rt.get("imageDigest", ""),
+            "sbom": evidence_document("generated" if rt.get("sbom", {}).get("status") == "present" else "missing", rt.get("sbom", {}).get("s3Key", ""), format="cyclonedx-json"),
+            "signature": evidence_document("verified" if rt.get("signature", {}).get("status") == "verified" else "generated" if rt.get("signature", {}).get("status") == "valid" else "missing", rt.get("signature", {}).get("s3Key", ""), provider="cosign"),
+            "provenance": evidence_document("generated" if rt.get("provenance", {}).get("status") == "valid" else "missing", rt.get("provenance", {}).get("s3Key", ""), slsa_level="2"),
+            "scan_evidence": evidence_document(scan_status, f"{evidence_prefix}/manifest.json", critical=critical, high=high),
+            "runner_execution": {"request_id": context["requestId"], "job_name": context.get("runner", {}).get("jobName"), "build_number": context.get("runner", {}).get("buildNumber"), "finished_at": utc_now().isoformat(), "manifest_sha256": manifest_sha},
+        }
+        headers = {"X-Client-Id": config.client_id, "Content-Type": "application/json"}
+        authorization = os.getenv("HORIZON_RELEASE_TRUST_AUTHORIZATION", "")
+        if authorization:
+            headers["Authorization"] = authorization
         try:
-            requests.post(
-                f"{backend_url}/pipeline/api/release-trust/runs/{release_id}/evidence",
-                json={
-                    "manifestS3Key": f"{evidence_prefix}/manifest.json",
-                    "manifestSha256": manifest_sha,
-                    "imageDigest": rt.get("imageDigest"),
-                },
-                headers={"X-Client-Id": config.client_id},
-                timeout=30,
+            response = requests.post(
+                f"{backend_url.rstrip('/')}/pipeline/api/release-trust/runner/v1/releases/{release_id}/completion",
+                json=completion, headers=headers, timeout=30,
             )
+            if response.status_code < 200 or response.status_code >= 300:
+                raise HTTPException(status_code=502, detail=f"Release Trust completion callback failed: HTTP {response.status_code}: {response.text[:500]}")
         except requests.RequestException as exc:
-            print(f"Warning: release trust backend notification failed: {exc}", flush=True)
+            raise HTTPException(status_code=502, detail=f"Release Trust completion callback failed: {exc}") from exc
 
     context["release_trust"]["manifestSha256"] = manifest_sha
 
@@ -3054,6 +3090,9 @@ def execute_release_trust_verify_promotion(action: Dict[str, Any], context: Dict
 
     if violations:
         raise HTTPException(status_code=422, detail="; ".join(violations))
+
+    if kms_key_id and image_uri:
+        context.setdefault("release_trust", {}).setdefault("signature", {})["status"] = "verified"
 
     context.setdefault("release_trust", {})["promotionVerification"] = {
         "status": "verified",
