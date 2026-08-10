@@ -72,7 +72,7 @@ RUN set -eux; \
     conftest --version; \
     jmeter --version
 
-RUN npm install -g newman newman-reporter-htmlextra @playwright/test@1.44.1
+RUN npm install -g newman@6.2.0 newman-reporter-htmlextra@1.23.1 @playwright/test@1.44.1
 
 COPY --from=trivy /usr/local/bin/trivy /usr/local/bin/trivy
 
@@ -81,7 +81,7 @@ RUN useradd --create-home --uid 10001 horizon \
     && chown -R 10001:10001 /var/lib/horizon-runner /tmp/npm-cache /ms-playwright /home/horizon
 
 COPY requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r /app/requirements.txt semgrep
+RUN pip install --no-cache-dir -r /app/requirements.txt semgrep==1.129.0
 
 COPY app /app/app
 RUN chown -R 10001:10001 /app

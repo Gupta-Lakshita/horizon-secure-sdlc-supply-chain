@@ -232,7 +232,9 @@ components:
     replicas: 1
     servicePort: 8080
     mode: signed-plan
-    executeActions: true
+    # Safe by default: a signed execution plan and an explicit production
+    # values override are required before any cloud action can run.
+    executeActions: false
     kanikoImage: gcr.io/kaniko-project/executor:v1.23.2
     keepBuildJobs: false
     executionPlanEndpoint: https://license.horizonrelevance.com/api/v1/execution/plans
@@ -252,6 +254,9 @@ components:
     securityFailOnDashboardUpload: false
     policyBundleMode: managed
     policyBundleDir: /app/app/policy_bundles
+    # The runner has SBOM, signing, provenance, evidence-bundle, and deployed
+    # digest-verification actions. Enable only with the release-trust service,
+    # immutable artifact bucket, and signing role configured.
     releaseTrustEnabled: false
     releaseTrustBackendUrl: "http://horizon-release-trust:8001"
     signingRoleArn: ""

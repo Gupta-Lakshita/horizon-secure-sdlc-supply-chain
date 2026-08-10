@@ -118,6 +118,8 @@ spec:
       serviceAccountName: {{ default "horizon-backend" $backendSa.name }}
       securityContext:
         fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
       {{- if $imagePullSecrets }}
       imagePullSecrets:
         {{- range $imagePullSecrets }}
@@ -481,6 +483,12 @@ spec:
         - name: runner
           image: {{ required "components.runner.image is required" $runner.image | quote }}
           imagePullPolicy: {{ default "Always" $runner.imagePullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            runAsNonRoot: true
+            runAsUser: 10001
           ports:
             - name: http
               containerPort: {{ default 8080 $runner.servicePort }}
